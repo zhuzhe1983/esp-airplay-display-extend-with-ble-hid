@@ -48,3 +48,17 @@ Claw4 官方主控端口描述为 `USB JTAG/serial debug unit`，但必须进一
 - [ESP32-P4 下载模式](https://docs.espressif.com/projects/esptool/en/latest/esp32p4/advanced-topics/boot-mode-selection.html#manual-bootloader)
 
 P4 连接恢复后，应先核对芯片 revision、面板、Flash 与原机分区并备份，再决定写入范围。项目默认 `flash` 会写入 bootloader、分区表与应用；此命令当前未执行。C5 无线固件也未改写。
+
+## 第二次连接排查（16:23–16:27）
+
+用户确认 Claw4 正常显示桌面。`1a86:8091` HUB 路径从 `02144330` 改为 `02144220`，已离开 Corsair ST100，但仍经过多级 HUB。系统串口和 IORegistry 均仍只有已确认的 S31，没有 P4。
+
+通过本机 libusb 对该 HUB 读取标准描述符和端口状态（没有卸载驱动、修改 USB 配置或操作其他 HUB）：
+
+- HUB 描述符 `0929042000306400ff`，四个下游口；初次四口状态均为 `00000000`，未供电、未连接。
+- 向该 HUB 四口发送标准 `SET_FEATURE(PORT_POWER)`，全部成功；端口 1、2、4 状态变为 `01010100`，报告已供电并检测到连接，端口 3 为 `00010000`。
+- 仅对已连接的 1、2、4 口发送标准 `SET_FEATURE(PORT_RESET)`，全部成功；1、2 口状态 `03011100`，4 口 `03051100`，均报告已启用。
+- 此后 macOS 仍未创建下游 USB 设备和串口。仅凭端口连接位无法确定下游芯片身份，仍不能烧录。
+- 操作结束均关闭 libusb 句柄；未执行任何芯片 Flash 或 eFuse 写入。详细记录：`.build/usb-hub-recovery.log`。
+
+下一项对照：临时拔下已正常枚举的 S31，将 Claw4 接到 S31 的同一根数据线及同一个电脑接口，以排除现有中间 HUB 链路。
