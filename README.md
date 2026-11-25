@@ -56,6 +56,8 @@ macOS 上将端口替换为实际 `/dev/cu.usbmodem...`。这个工具只是构�
 4. 在 Mac“系统设置 → 蓝牙”中另外配对 `MetalioClaw4 Input` 或 `M5Stack Tab5 Input`。设备启动时开启三分钟配对窗口；窗口结束后点设备的 `PAIR` 重开。投屏与 HID 是两条独立连接。
 5. 点 `KEYBOARD` 打开软键盘；点修饰键使其选中，再点普通键发送组合键。`IME` 发出 Ctrl+Space，遵循 Mac 当前输入源快捷键设置。中文由 Mac 输入法将拼音等键击转换，不直接发送 Unicode 字符。
 
+若电脑无法连接设置热点，可使用[USB 配网](docs/USB_PROVISIONING.md)，直接保存设备网络配置。
+
 触控区：轻点为左键，长按后移动为拖动，双指移动为滚动，双指轻点为右键。软键盘会覆盖画面的一部分，使用 `HIDE KEYS` 收起。设备 UI 使用英文短标签。`INFO` 查看连接状态；在该页按住 `WIFI RESET` 两秒清除 Wi-Fi 设置并重新启动。
 
 ## 画面与性能

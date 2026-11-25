@@ -45,6 +45,7 @@ void input_ble_pairing_window(void){
 }
 void app_network_forget_wifi(void){assert(!lock->locked);wifi_reset_calls++;}
 esp_err_t app_network_start(const char *name,network_state_cb cb,void *ctx){(void)name;(void)cb;(void)ctx;return ESP_OK;}
+esp_err_t app_network_start_usb_provisioning(void){return ESP_OK;}
 const char *app_network_device_name(void){return "Host test";}
 bool app_network_ready(void){return false;}
 esp_err_t airplay_receiver_start(const airplay_receiver_config_t *c){(void)c;return ESP_OK;}

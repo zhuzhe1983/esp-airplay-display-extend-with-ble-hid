@@ -15,6 +15,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_hosted.h"
+#include "driver/usb_serial_jtag.h"
 #include "lwip/sockets.h"
 
 static const char *TAG="network";
@@ -52,6 +53,57 @@ static bool form_value(const char *body,const char *key,char *out,size_t capacit
         p=*end?end+1:end;
     }
     return false;
+}
+/* Both provisioning paths commit the same NVS keys. Credentials are never logged. */
+static esp_err_t save_configuration(const char *new_ssid,const char *new_password,const char *new_name){
+    if(!new_ssid[0]||strlen(new_ssid)>32||strlen(new_password)>63||
+       (new_password[0]&&strlen(new_password)<8)||!new_name[0]||strlen(new_name)>40)
+        return ESP_ERR_INVALID_ARG;
+    for(const char *p=new_name;*p;p++)if(!isalnum((unsigned char)*p)&&!strchr(" ._-",*p))return ESP_ERR_INVALID_ARG;
+    nvs_handle_t nvs;esp_err_t err=nvs_open("p4_network",NVS_READWRITE,&nvs);
+    if(err==ESP_OK){err=nvs_set_str(nvs,"ssid",new_ssid);if(!err)err=nvs_set_str(nvs,"password",new_password);if(!err)err=nvs_set_str(nvs,"name",new_name);if(!err)err=nvs_commit(nvs);nvs_close(nvs);}
+    return err;
+}
+static void clear_secret(void *data,size_t size){volatile unsigned char *p=data;while(size--)*p++=0;}
+static void usb_provision_task(void *arg){
+    (void)arg;
+    char line[641]={0};size_t used=0;bool discard=false;
+    for(;;){
+        uint8_t byte;
+        if(usb_serial_jtag_read_bytes(&byte,1,pdMS_TO_TICKS(100))!=1)continue;
+        if(byte=='\r')continue;
+        if(byte!='\n'){
+            if(!byte||used==sizeof line-1)discard=true;
+            if(!discard)line[used++]=(char)byte;
+            continue;
+        }
+        line[used]=0;
+        if(!discard&&strncmp(line,"P4-WIFI ",8)==0){
+            char new_ssid[33]={0},new_password[64]={0},new_name[41]={0};
+            esp_err_t err=ESP_ERR_INVALID_ARG;
+            if(form_value(line+8,"ssid",new_ssid,sizeof new_ssid)&&
+               form_value(line+8,"password",new_password,sizeof new_password)&&
+               form_value(line+8,"name",new_name,sizeof new_name))
+                err=save_configuration(new_ssid,new_password,new_name);
+            clear_secret(new_password,sizeof new_password);
+            clear_secret(line,sizeof line);
+            const char *reply=err==ESP_OK?"P4_WIFI_OK\n":"P4_WIFI_ERROR\n";
+            usb_serial_jtag_write_bytes(reply,strlen(reply),pdMS_TO_TICKS(500));
+            usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(500));
+            if(err==ESP_OK){vTaskDelay(pdMS_TO_TICKS(1200));esp_restart();}
+        }
+        clear_secret(line,sizeof line);used=0;discard=false;
+    }
+}
+esp_err_t app_network_start_usb_provisioning(void){
+    static bool started;
+    if(started)return ESP_ERR_INVALID_STATE;
+    if(!usb_serial_jtag_is_driver_installed()){
+        usb_serial_jtag_driver_config_t cfg={.rx_buffer_size=1024,.tx_buffer_size=512};
+        esp_err_t err=usb_serial_jtag_driver_install(&cfg);if(err!=ESP_OK)return err;
+    }
+    if(xTaskCreate(usb_provision_task,"usb_wifi",4096,NULL,2,NULL)!=pdPASS)return ESP_ERR_NO_MEM;
+    started=true;ESP_LOGI(TAG,"USB Wi-Fi provisioning ready");return ESP_OK;
 }
 /* The setup service is reachable only through the device's WPA2 setup AP. */
 static bool on_setup_interface(httpd_req_t *req){
@@ -92,8 +144,7 @@ static esp_err_t configure_post(httpd_req_t *req){
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Invalid SSID, password or device name");
     for(char *p=new_name;*p;p++)if(!isalnum((unsigned char)*p)&&!strchr(" ._-",*p))
         return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Use English letters, digits, spaces, . _ - for the name");
-    nvs_handle_t nvs;esp_err_t err=nvs_open("p4_network",NVS_READWRITE,&nvs);
-    if(err==ESP_OK){err=nvs_set_str(nvs,"ssid",new_ssid);if(!err)err=nvs_set_str(nvs,"password",new_password);if(!err)err=nvs_set_str(nvs,"name",new_name);if(!err)err=nvs_commit(nvs);nvs_close(nvs);}
+    esp_err_t err=save_configuration(new_ssid,new_password,new_name);
     memset(new_password,0,sizeof new_password);memset(body,0,sizeof body);
     if(err!=ESP_OK)return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"Settings could not be saved");
     httpd_resp_set_type(req,"text/html; charset=utf-8");

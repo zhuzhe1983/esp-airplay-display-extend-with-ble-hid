@@ -266,6 +266,8 @@ void app_main(void) {
 #endif
     err = input_ble_start(ble_name, native_ui_ble, NULL);
     if (err != ESP_OK) native_ui_ble(INPUT_BLE_ERROR, "C5/C6 Wi-Fi + BLE firmware required", NULL);
+    err = app_network_start_usb_provisioning();
+    if (err != ESP_OK) ESP_LOGW(TAG, "USB provisioning unavailable: %s", esp_err_to_name(err));
     bool receiving = false;
     for (;;) {
         const bool online = app_network_ready();
