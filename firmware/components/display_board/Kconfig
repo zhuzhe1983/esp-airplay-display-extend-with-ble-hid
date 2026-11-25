@@ -1,0 +1,31 @@
+menu "Display board"
+
+choice DISPLAY_BOARD
+    prompt "Touchscreen device"
+    default DISPLAY_BOARD_METALIO_CLAW4
+
+    config DISPLAY_BOARD_METALIO_CLAW4
+        bool "MetalioClaw4 (ESP32-P4 + ESP32-C5, 720x720)"
+
+    config DISPLAY_BOARD_M5STACK_TAB5
+        bool "M5Stack Tab5 (ESP32-P4 + ESP32-C6, 720x1280)"
+endchoice
+
+choice CLAW4_LCD
+    prompt "MetalioClaw4 LCD module"
+    depends on DISPLAY_BOARD_METALIO_CLAW4
+    default CLAW4_LCD_NV3051F
+
+    config CLAW4_LCD_NV3051F
+        bool "Production NV3051F / TRULY HE396-040T2BZZ"
+
+    config CLAW4_LCD_FL7707N
+        bool "Alternative FL7707N module"
+endchoice
+
+config DISPLAY_BOARD_BACKLIGHT_PERCENT
+    int "Initial display backlight (%)"
+    range 0 100
+    default 70
+
+endmenu

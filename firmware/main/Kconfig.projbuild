@@ -1,0 +1,24 @@
+menu "P4 Native Display"
+    config P4_STREAM_WIDTH
+        int "AirPlay requested width (sender can override)"
+        range 320 1280
+        default 640
+    config P4_STREAM_HEIGHT
+        int "AirPlay requested height (sender can override)"
+        range 240 1280
+        default 360
+    config P4_STREAM_FPS
+        int "AirPlay requested maximum FPS"
+        range 1 30
+        default 10
+    config P4_FRAME_QUEUE_BYTES
+        int "Compressed frame queue memory budget"
+        range 1048576 8388608
+        default 4194304
+    config P4_INPUT_ABSOLUTE
+        bool "Expose experimental absolute pointer mode in on-device menu"
+        default n
+        help
+            macOS chooses the target display. This is not Sidecar direct touch.
+            Start with a mirrored/single display, verify corners, then calibrate.
+endmenu

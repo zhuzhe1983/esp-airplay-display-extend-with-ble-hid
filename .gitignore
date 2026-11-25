@@ -1,0 +1,14 @@
+firmware/build*/
+firmware/managed_components/
+firmware/sdkconfig
+firmware/sdkconfig.old
+.tools/
+.build/
+__pycache__/
+*.pyc
+*.o
+*.a
+*.elf
+*.map
+*.log
+.DS_Store

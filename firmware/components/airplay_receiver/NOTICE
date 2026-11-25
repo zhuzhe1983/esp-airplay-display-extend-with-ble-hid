@@ -1,0 +1,34 @@
+P4 Native Display — experimental AirPlay receiver component
+
+Based on ESP32 iPhone Agent by Henry Yuan
+Copyright (c) 2026 Henry Yuan
+https://github.com/onehumanbeing/esp32-iphone-agent
+Source commit: 90f450ea7c2741901a2b4102c8d209c930961912
+
+The AirPlay core is derived from UxPlay / RPiPlay / PlayFair and is GPL-3.0.
+The full GPL text is in COPYING and core/playfair/LICENSE.md. Original notices
+and the upstream licensing explanation remain in core/ and core/LICENSE-GPL.md.
+The bplist codec and the original H.264 framing helpers came from the MIT-licensed
+parts of ESP32 iPhone Agent. The complete Henry Yuan MIT notice is preserved in
+LICENSE-UPSTREAM-MIT and NOTICE-UPSTREAM.
+
+Protocol comparison reference:
+https://github.com/FDH2/UxPlay/tree/48f5ce47c9ef694afccfac907c9e8828329657fe
+
+Changes in this native ESP-IDF port:
+- Public callback API and persistent NVS receiver identity.
+- Finite startup/shutdown, bounded RTSP and mirror packet handling.
+- Checked binary-plist arithmetic, AVCC validation, multi-SPS/PPS extraction.
+- Session peer binding, explicit failure codes and no-video diagnostics.
+- Timing sockets start at the first SETUP, as in UxPlay.
+- Completed legacy-pairing requirement before hashing the session AES key.
+- Relative sender timestamps and SPS/PPS-prefixed IDR callbacks.
+- Const-correct PlayFair table access; cryptographic algorithms are retained.
+- No Arduino, GStreamer, iPhone relay app, or HoppScreen sender dependency.
+
+No macOS/physical-board end-to-end compatibility or performance is claimed.
+This component does not implement Sidecar, Apple Pencil, Touch Bar, or iPad identity.
+
+The linked firmware is a combined GPL work; distribute its corresponding source
+and the applicable dependency notices with binaries. libsodium and mDNS retain
+their own upstream licenses in the managed-component packages.

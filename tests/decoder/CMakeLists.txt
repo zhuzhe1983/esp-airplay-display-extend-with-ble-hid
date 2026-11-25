@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.16)
+project(p4_decoder_smoke LANGUAGES C CXX)
+enable_testing()
+add_subdirectory(../../firmware/components/video_decoder decoder)
+add_executable(decoder_smoke decoder_smoke.cpp)
+target_link_libraries(decoder_smoke PRIVATE video_decoder)
+target_compile_features(decoder_smoke PRIVATE cxx_std_17)
+target_compile_options(decoder_smoke PRIVATE -Wall -Wextra -Werror)
+target_compile_definitions(decoder_smoke PRIVATE
+    FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+add_test(NAME real_h264_profiles COMMAND decoder_smoke)

@@ -1,0 +1,61 @@
+{
+  "generator": "FFmpeg lavfi testsrc2 + libx264",
+  "frames": 8,
+  "source": [
+    160,
+    96
+  ],
+  "panel": [
+    80,
+    80
+  ],
+  "sample_x": [
+    5,
+    15,
+    25,
+    35,
+    45,
+    55,
+    65,
+    75
+  ],
+  "sample_y_in_view": [
+    5,
+    15,
+    25,
+    35,
+    45
+  ],
+  "streams": {
+    "baseline": {
+      "profile": "Constrained Baseline",
+      "width": 160,
+      "height": 96,
+      "has_b_frames": 0,
+      "cabac_requested": false,
+      "cabac_verified_from_pps": false,
+      "sha256": "27eb0fb461980f39764bc037a19dfa6b04d4256fcc71b7abc44a21fe04759912",
+      "x264_params": "aud=1:repeat-headers=1:scenecut=0:keyint=8:ref=2:cabac=0:bframes=0:b-pyramid=0:slices=2:8x8dct=0"
+    },
+    "main": {
+      "profile": "Main",
+      "width": 160,
+      "height": 96,
+      "has_b_frames": 1,
+      "cabac_requested": true,
+      "cabac_verified_from_pps": true,
+      "sha256": "f1791f8257ee139eceb5fbb3eab6947224ce72da8cc06c9949881caa91bb4411",
+      "x264_params": "aud=1:repeat-headers=1:scenecut=0:keyint=8:ref=2:cabac=1:bframes=2:b-pyramid=0:slices=2:8x8dct=0"
+    },
+    "high": {
+      "profile": "High",
+      "width": 160,
+      "height": 96,
+      "has_b_frames": 1,
+      "cabac_requested": true,
+      "cabac_verified_from_pps": true,
+      "sha256": "d0aa86b94891b6a108a33ff99fefa7fcc16a796c3a946970255a50d3c737570b",
+      "x264_params": "aud=1:repeat-headers=1:scenecut=0:keyint=8:ref=2:cabac=1:bframes=2:b-pyramid=0:slices=2:8x8dct=1"
+    }
+  }
+}

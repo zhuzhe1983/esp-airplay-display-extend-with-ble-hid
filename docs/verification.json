@@ -1,0 +1,62 @@
+{
+  "version": "0.1.0",
+  "date": "2026-11-24",
+  "timezone": "Asia/Shanghai",
+  "release_kind": "experimental-source",
+  "idf_version": "5.5.4",
+  "idf_commit": "735507283d5b2f9fb363a1901172dbd9e847945d",
+  "toolchain": "riscv32-esp-elf GCC 14.2.0 (esp-14.2.0_20260121)",
+  "builds": {
+    "metalio_claw4": {
+      "passed": true,
+      "app_bytes": 1674256,
+      "app_sha256": "a8c713a1fdd65977aff34ca8d5fd8c701a30570563fb9447ccadcb648833f2cf",
+      "chip": "esp32p4",
+      "cpu_mhz": 360,
+      "p4_revision_family": "0.x/1.x (<3 SDK configuration)"
+    },
+    "m5stack_tab5": {
+      "passed": true,
+      "app_bytes": 1697920,
+      "app_sha256": "e0f1fbd1ac3da3a1c60a196231ab6bfba0754b57eaa9026d29f07aa6fa76da42",
+      "chip": "esp32p4",
+      "cpu_mhz": 360,
+      "p4_revision_family": "0.x/1.x (<3 SDK configuration)"
+    }
+  },
+  "coprocessors": {
+    "esp32c5": {
+      "passed": true,
+      "version": "2.12.12",
+      "app_bytes": 1252592,
+      "app_sha256": "d8dcd2bd0e01406e1d1588c8d165573cf9553d25c0d185119bceb2a40e1fe162",
+      "wifi": true,
+      "ble_controller": true,
+      "hci": "SDIO"
+    },
+    "esp32c6": {
+      "passed": true,
+      "version": "2.12.12",
+      "app_bytes": 1211344,
+      "app_sha256": "d04425b24dd0e97b7ac3ce3e144ad664fa87ef7da5431ccab3c189d191205dc9",
+      "wifi": true,
+      "ble_controller": true,
+      "hci": "SDIO"
+    }
+  },
+  "host_tests": {
+    "h264_profiles": "passed",
+    "airplay_packet_bounds": "passed_asan_ubsan",
+    "hid_reports_gestures_queue": "passed_asan_ubsan",
+    "runtime_ui_pipeline": "passed",
+    "leak_sanitizer": "not_run_ptrace_environment"
+  },
+  "hardware_validation": {
+    "mac_airplay": "not_run",
+    "mirror_and_extend": "not_run",
+    "lcd_touch": "not_run",
+    "ble_pairing": "not_run",
+    "absolute_extended_display_mapping": "not_verified",
+    "sidecar_receiver": "not_implemented"
+  }
+}

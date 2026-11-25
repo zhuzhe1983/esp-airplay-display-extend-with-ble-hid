@@ -1,0 +1,7 @@
+version: "0.1.0"
+description: "Experimental native ESP-IDF legacy AirPlay screen mirroring receiver"
+license: "GPL-3.0-or-later"
+dependencies:
+  idf: ">=5.5.0,<6.0.0"
+  espressif/libsodium: "1.0.22~1"
+  espressif/mdns: "1.15.1"

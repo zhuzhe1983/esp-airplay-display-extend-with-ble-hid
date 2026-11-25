@@ -1,0 +1,21 @@
+name: Firmware and host checks
+on: [push, pull_request]
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y build-essential cmake ninja-build
+      - run: python3 tools/test_host.py
+  firmware:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5.4
+    strategy:
+      matrix:
+        board: [metalio_claw4, m5stack_tab5]
+    steps:
+      - uses: actions/checkout@v4
+      - shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          python tools/build.py ${{ matrix.board }} build
