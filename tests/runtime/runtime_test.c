@@ -10,6 +10,9 @@
 static size_t test_strlcpy(char *dst,const char *src,size_t n){
     size_t len=strlen(src);if(n){size_t take=len<n-1?len:n-1;memcpy(dst,src,take);dst[take]=0;}return len;
 }
+#ifdef strlcpy
+#undef strlcpy
+#endif
 #define strlcpy test_strlcpy
 #include "../../firmware/main/main.c"
 #include "../../firmware/main/native_ui.c"
