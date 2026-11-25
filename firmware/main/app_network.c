@@ -19,6 +19,7 @@
 #include "input_ble.h"
 #include "native_ui.h"
 #include "display_profile.h"
+#include "video_pipeline.h"
 #include "lwip/sockets.h"
 
 static const char *TAG="network";
@@ -87,13 +88,15 @@ static void usb_provision_task(void *arg){
         }
         if(!discard&&strcmp(line,"P4-STATUS")==0){
             esp_netif_ip_info_t ip={0};native_ui_stats_t stats;native_ui_get_stats(&stats);
+            video_pipeline_stats_t pipeline;video_pipeline_get_stats(&pipeline);
             esp_netif_t *sta=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
             if(sta)esp_netif_get_ip_info(sta,&ip);
-            char reply[384];int n=snprintf(reply,sizeof reply,
-                "P4_STATUS {\"wifi_ready\":%d,\"ip\":\"" IPSTR "\",\"ble_ready\":%d,\"airplay\":\"%s\",\"decoded\":%llu,\"shown\":%llu,\"dropped\":%lu,\"decoder_error\":%d,\"source_width\":%u,\"source_height\":%u,\"profile\":\"%s\"}\n",
+            char reply[512];int n=snprintf(reply,sizeof reply,
+                "P4_STATUS {\"wifi_ready\":%d,\"ip\":\"" IPSTR "\",\"ble_ready\":%d,\"airplay\":\"%s\",\"decoded\":%llu,\"shown\":%llu,\"dropped\":%lu,\"decoder_error\":%d,\"source_width\":%u,\"source_height\":%u,\"profile\":\"%s\",\"decoded_outputs\":%lu,\"replaced_outputs\":%lu,\"frame_age_ms\":%lu}\n",
                 app_network_ready(),IP2STR(&ip.ip),input_ble_is_ready(),airplay_receiver_state_name(airplay_receiver_get_state()),
                 (unsigned long long)stats.decoded,(unsigned long long)stats.shown,(unsigned long)stats.dropped,stats.decoder_error,
-                stats.source_width,stats.source_height,display_profile_name(display_profile_get()));
+                stats.source_width,stats.source_height,display_profile_name(display_profile_get()),
+                (unsigned long)pipeline.decoded_outputs,(unsigned long)pipeline.replaced_outputs,(unsigned long)pipeline.frame_age_ms);
             if(n>0&&(size_t)n<sizeof reply)usb_serial_jtag_write_bytes(reply,n,pdMS_TO_TICKS(500));
         }
         if(!discard&&strcmp(line,"P4-PAIR")==0){

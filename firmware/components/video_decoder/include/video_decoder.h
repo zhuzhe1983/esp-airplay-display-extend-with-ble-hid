@@ -10,6 +10,18 @@ extern "C" {
 #endif
 
 typedef struct video_decoder video_decoder_t;
+typedef struct video_converter video_converter_t;
+
+/* Borrowed I420 image in display order. Copy planes before returning if retained.
+ * Strides are in bytes. All metadata belongs to this image, not the next AU. */
+typedef struct {
+    const uint8_t *planes[3];
+    size_t strides[3];
+    uint16_t width, height, sar_width, sar_height;
+    bool full_range, bt709;
+    uint64_t frame_number;
+} video_decoder_yuv_frame_t;
+typedef void (*video_decoder_yuv_cb_t)(void *user, const video_decoder_yuv_frame_t *frame);
 
 typedef struct {
     uint16_t x, y, width, height;
@@ -25,8 +37,8 @@ typedef struct {
     uint64_t frame_number;
 } video_decoder_frame_t;
 
-/* Called synchronously on the caller's decode task. Copy if retained or queued.
- * rgb565 is valid until the next push/flush/reset/destroy. Do not reenter. */
+/* Called synchronously by decoder push/flush or converter render. Copy if retained.
+ * rgb565 lasts until the owning handle's next operation. Do not reenter it. */
 typedef void (*video_decoder_frame_cb_t)(void *user,
                                          const video_decoder_frame_t *frame);
 
@@ -42,6 +54,9 @@ typedef struct {
     /* Optional output policy, after AVC decoding and before RGB conversion.
      * false skips presentation only; reference pictures remain intact. */
     bool (*should_present)(void *user);
+    /* Select either callback (synchronous RGB) or yuv_callback (no RGB work).
+     * A separate converter can consume owned YUV snapshots on another task. */
+    video_decoder_yuv_cb_t yuv_callback;
 } video_decoder_config_t;
 
 typedef enum {
@@ -68,6 +83,14 @@ int video_decoder_flush(video_decoder_t *decoder);
 int video_decoder_reset(video_decoder_t *decoder);
 void video_decoder_destroy(video_decoder_t *decoder);
 const char *video_decoder_error_string(int result);
+
+/* One serialized owner per converter; independent from the AVC decoder.
+ * Rendering is synchronous. The RGB callback buffer lasts until the next render. */
+int video_converter_init(uint16_t panel_width, uint16_t panel_height,
+                         video_decoder_frame_cb_t callback, void *user,
+                         video_converter_t **out_converter);
+int video_converter_render(video_converter_t *converter, const video_decoder_yuv_frame_t *frame);
+void video_converter_destroy(video_converter_t *converter);
 
 #ifdef __cplusplus
 }

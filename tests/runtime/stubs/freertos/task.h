@@ -18,6 +18,7 @@ static inline BaseType_t xTaskCreatePinnedToCore(void (*entry)(void *),const cha
     (void)core;return xTaskCreate(entry,name,stack,arg,priority,handle);
 }
 static inline void xTaskNotifyGive(TaskHandle_t task){(void)task;stub_notifications++;}
+static inline void vTaskDelete(TaskHandle_t task){(void)task;}
 static inline uint32_t ulTaskNotifyTake(BaseType_t clear,TickType_t ticks){
     (void)clear;(void)ticks;if(stub_exit_on_idle)longjmp(stub_task_exit,1);return 0;
 }

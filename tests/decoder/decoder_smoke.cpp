@@ -49,6 +49,29 @@ struct Capture {
     std::set<uint64_t> hashes;
 };
 
+struct LatestYuv {
+    video_decoder_yuv_frame_t frame{};
+    std::vector<uint8_t> pixels;
+    unsigned count=0;
+};
+
+static void on_yuv(void *user,const video_decoder_yuv_frame_t *frame){
+    auto &latest=*static_cast<LatestYuv *>(user);
+    CHECK(frame&&frame->width==160&&frame->height==96&&frame->frame_number==latest.count+1);
+    const size_t cw=(frame->width+1U)/2,ch=(frame->height+1U)/2;
+    latest.pixels.resize(size_t(frame->width)*frame->height+2*cw*ch);
+    latest.frame=*frame;
+    uint8_t *dst=latest.pixels.data();
+    for(unsigned plane=0;plane<3;++plane){
+        const size_t rows=plane?ch:frame->height,cols=plane?cw:frame->width;
+        latest.frame.planes[plane]=dst;latest.frame.strides[plane]=cols;
+        for(size_t y=0;y<rows;++y)
+            std::copy_n(frame->planes[plane]+y*frame->strides[plane],cols,dst+y*cols);
+        dst+=rows*cols;
+    }
+    ++latest.count;
+}
+
 static void on_frame(void *user, const video_decoder_frame_t *frame) {
     auto &capture = *static_cast<Capture *>(user);
     CHECK(frame && frame->rgb565);
@@ -173,6 +196,25 @@ static void run_profile(const std::string &profile) {
     CHECK(capture.decisions==8&&capture.frames==4);
     CHECK(double(capture.error_sum)/capture.comparisons<4.5&&capture.max_error<=40);
     video_decoder_destroy(decoder);
+
+    // Keep just the latest owned I420 snapshot, then destroy all codec/reference
+    // buffers before converting it on an independent consumer.
+    LatestYuv latest;
+    config.callback=nullptr;config.yuv_callback=on_yuv;config.user=&latest;config.should_present=nullptr;
+    CHECK(video_decoder_init(&config,&decoder)==VIDEO_DECODER_OK);
+    push_stream(decoder,data);
+    CHECK(latest.count==8&&latest.frame.frame_number==8);
+    video_decoder_destroy(decoder);
+    capture.frames=0;capture.skip_outputs=7;
+    capture.error_sum=capture.comparisons=capture.max_error=0;
+    video_converter_t *converter=nullptr;
+    CHECK(video_converter_init(config.panel_width,config.panel_height,on_frame,&capture,&converter)==VIDEO_DECODER_OK);
+    CHECK(video_converter_render(converter,&latest.frame)==VIDEO_DECODER_OK);
+    CHECK(capture.frames==1&&double(capture.error_sum)/capture.comparisons<4.5&&capture.max_error<=40);
+    latest.frame.strides[2]=0;
+    CHECK(video_converter_render(converter,&latest.frame)==VIDEO_DECODER_ERR_ARGUMENT);
+    CHECK(video_converter_render(converter,nullptr)==VIDEO_DECODER_ERR_ARGUMENT);
+    video_converter_destroy(converter);
 }
 
 static void bounds_and_errors() {

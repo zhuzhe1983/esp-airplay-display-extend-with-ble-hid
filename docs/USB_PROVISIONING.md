@@ -35,6 +35,11 @@ P4-WIFI ssid=<URL编码的SSID>&password=<URL编码的密码>&name=<URL编码的
 
 切档不重启主控，但会结束旧 AirPlay 会话；在 Mac 连接带 `FastSync` 或 `Sharp` 后缀的名称。非法档位或 NVS 保存失败返回 `P4_MODE_ERROR`。状态 JSON 的 `profile` 为 `smooth` 或 `sharp`；`decoded` 只统计传到 UI 的输出，不包含主动跳过显示的解码图片。
 
+最新图片优先管线另提供 `decoded_outputs`（复制成功的 I420 输出数）、
+`replaced_outputs`（待显示旧图片被新图片覆盖的次数）、`frame_age_ms`（上次成功转换
+的解码快照到 UI 的耗时）。最后一项不包含 Mac 发送、网络排队和面板扫描时间，
+不能当作端到端延迟。
+
 `P4_PAIR_OK` 只表示收到请求，实际广播和配对结果以日志为准。
 `airplay=streaming` 只表示收到有效压缩数据；`decoded`、`shown` 增长且屏幕有图像才算实际出图。
 调试时保持同一个串口句柄打开，通过它发送这些命令；反复关闭再打开串口可能使 P4 复位并中断连接。

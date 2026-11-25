@@ -63,6 +63,11 @@ int video_decoder_flush(video_decoder_t *d){(void)d;return 0;}
 int video_decoder_reset(video_decoder_t *d){assert(d);reset_calls++;return reset_result;}
 void video_decoder_destroy(video_decoder_t *d){(void)d;}
 const char *video_decoder_error_string(int rc){(void)rc;return "test error";}
+int video_converter_init(uint16_t w,uint16_t h,video_decoder_frame_cb_t cb,void *user,video_converter_t **out){
+    (void)w;(void)h;(void)cb;(void)user;*out=(void *)2;return 0;
+}
+int video_converter_render(video_converter_t *c,const video_decoder_yuv_frame_t *f){(void)c;(void)f;return 0;}
+void video_converter_destroy(video_converter_t *c){(void)c;}
 
 static ui_action_t sample_touch(int x,int y,int count,uint32_t now){
     board_touch_point_t point={(uint16_t)x,(uint16_t)y,1,0};
@@ -196,11 +201,6 @@ static void pipeline_regressions(void){
     video_decoder_frame_t frame={.rgb565=canvas,.width=width,.height=height,.stride_bytes=(size_t)width*2,
         .view_rect={0,0,width,height},.source_width=640,.source_height=360};
     decode_context_t context={.current_epoch=old.epoch};decoded_frame(&context,&frame);assert(decoded_frames==before);
-    assert(!should_present_frame(&context));
-    context.current_epoch=fresh;
-    assert(should_present_frame(&context));context.last_present_us=esp_timer_get_time();
-    assert(!should_present_frame(&context));
-    stub_time_us+=150000;assert(should_present_frame(&context));
     context.current_epoch=fresh;decoded_frame(&context,&frame);assert(decoded_frames==before+1);
     receiver_state(AIRPLAY_RECEIVER_WAITING_VIDEO,"Packet lost",NULL);
     assert(queued_bytes==0&&needs_idr&&have_video&&recovering);
@@ -223,6 +223,45 @@ static void pipeline_regressions(void){
     assert(stub_delay_hook==NULL);
     puts("Pipeline: full budget includes in-flight AU; IDR recovery; old epoch cannot publish or clear new queue; reset failure handled");
     puts("TCP backpressure: pressure waits without dropping reference frames; reset cancels a waiting old-session AU; timeout remains bounded");
+}
+
+static void latest_image_regressions(void){
+    latest_lock=xSemaphoreCreateMutex();present_task_handle=(void *)2;
+    uint8_t y[48],u[12],v[12];memset(y,11,sizeof y);memset(u,22,sizeof u);memset(v,33,sizeof v);
+    video_decoder_yuv_frame_t raw={.planes={y,u,v},.strides={12,6,6},.width=8,.height=4,
+        .sar_width=4,.sar_height=3,.bt709=true,.frame_number=1};
+    decode_context_t context={.current_epoch=atomic_load(&epoch)};
+    capture_yuv(&context,&raw);memset(y,44,sizeof y);
+    assert(latest_images[latest_pending].frame.planes[0][0]==11);
+    raw.frame_number=2;capture_yuv(&context,&raw);
+    raw.frame_number=3;memset(y,55,sizeof y);capture_yuv(&context,&raw);
+    latest_image_t *active=take_latest_image();assert(active&&active->frame.frame_number==3);
+    assert(active->frame.planes[0][0]==55&&active->frame.planes[1][0]==22&&active->frame.planes[2][0]==33);
+    assert(active->frame.strides[0]==8&&active->frame.strides[1]==4&&active->frame.sar_width==4&&active->frame.bt709);
+    raw.frame_number=4;memset(y,66,sizeof y);capture_yuv(&context,&raw);
+    raw.frame_number=5;memset(y,77,sizeof y);capture_yuv(&context,&raw);
+    assert(active->frame.planes[0][0]==55&&active->frame.frame_number==3);
+    assert(latest_images[latest_pending].frame.frame_number==5);
+    assert(atomic_load(&replaced_outputs)==3);
+    receiver_state(AIRPLAY_RECEIVER_ADVERTISING,"new session",NULL);
+    assert(latest_pending==-1);
+    capture_yuv(&context,&raw);assert(latest_pending==-1);
+    video_decoder_frame_t rgb={.rgb565=canvas,.width=width,.height=height,.stride_bytes=(size_t)width*2,
+        .view_rect={0,0,width,height},.source_width=8,.source_height=4};
+    uint64_t before=decoded_frames;decoded_frame(&context,&rgb);assert(decoded_frames==before);
+    context.current_epoch=atomic_load(&epoch);raw.frame_number=6;capture_yuv(&context,&raw);
+    retire_latest_image();active=take_latest_image();assert(active&&active->frame.frame_number==6);
+    retire_latest_image();assert(take_latest_image()==NULL);
+    raw.frame_number=7;capture_yuv(&context,&raw);
+    uint8_t larger[96];video_decoder_yuv_frame_t big=raw;big.width=16;
+    big.planes[0]=big.planes[1]=big.planes[2]=larger;big.strides[0]=16;big.strides[1]=big.strides[2]=8;
+    stub_alloc_fail=1;capture_yuv(&context,&big);stub_alloc_fail=0;
+    active=take_latest_image();assert(active&&active->frame.frame_number==7);retire_latest_image();
+    video_pipeline_stats_t stats;video_pipeline_get_stats(&stats);
+    assert(stats.decoded_outputs==7&&stats.replaced_outputs==3);
+    for(unsigned i=0;i<2;i++){free(latest_images[i].storage);memset(&latest_images[i],0,sizeof latest_images[i]);}
+    vSemaphoreDelete(latest_lock);latest_lock=NULL;
+    puts("Latest frame: pending images are replaced, active pixels stay owned, reset cancels obsolete images, allocation failure preserves pending image");
 }
 
 static void presentation_regressions(void){
@@ -304,7 +343,7 @@ int main(int argc,char **argv){
     const char *render_directory=NULL;
     if(argc==3&&strcmp(argv[1],"--render")==0)render_directory=argv[2];
     else if(argc!=1){fprintf(stderr,"usage: %s [--render DIRECTORY]\n",argv[0]);return 2;}
-    ui_regressions();fullscreen_regressions();pipeline_regressions();presentation_regressions();
+    ui_regressions();fullscreen_regressions();pipeline_regressions();latest_image_regressions();presentation_regressions();
     if(render_directory)render_pages(render_directory);
     reset_pipeline();vQueueDelete(frame_queue);vSemaphoreDelete(pipeline_lock);
     free(video);free(canvas);vSemaphoreDelete(lock);

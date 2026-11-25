@@ -321,11 +321,8 @@ uint16_t yuv565(int y, int u, int v, bool full, bool bt709) {
 struct video_decoder {
     video_decoder_config_t config{};
     ISVCDecoder *codec = nullptr;
-    uint16_t *pixels = nullptr;
-    uint16_t *sample_x = nullptr;
-    size_t pixel_bytes = 0;
+    video_converter_t *converter = nullptr;
     ParameterSets sets{};
-    uint64_t frames = 0;
     uint64_t decoded_outputs = 0;
     bool flushed = false;
 #ifdef ESP_PLATFORM
@@ -333,6 +330,16 @@ struct video_decoder {
     int last_nri=-1;
     size_t last_au_bytes=0;
 #endif
+};
+
+struct video_converter {
+    uint16_t width=0,height=0;
+    video_decoder_frame_cb_t callback=nullptr;
+    void *user=nullptr;
+    uint16_t *pixels = nullptr;
+    uint16_t *sample_x = nullptr;
+    size_t pixel_bytes = 0;
+    uint64_t frames = 0;
 };
 
 namespace {
@@ -371,78 +378,34 @@ int initialize_codec(video_decoder_t *d) {
 
 int emit_frame(video_decoder_t *d, uint8_t *planes[3], const SBufferInfo &buffer) {
     if (!buffer.iBufferStatus) return VIDEO_DECODER_OK;
-#ifdef ESP_PLATFORM
-    const int64_t convert_started=esp_timer_get_time();
-#endif
     const auto &image = buffer.UsrData.sSystemBuffer;
     if (!planes[0] || !planes[1] || !planes[2] ||
         image.iWidth <= 0 || image.iHeight <= 0 ||
-        image.iWidth > d->config.max_input_width ||
-        image.iHeight > d->config.max_input_height ||
+        image.iWidth > d->config.max_input_width || image.iHeight > d->config.max_input_height ||
         uint64_t(image.iWidth) * image.iHeight > kMaxVisiblePixels ||
         image.iStride[0] < image.iWidth || image.iStride[1] < (image.iWidth + 1) / 2)
         return VIDEO_DECODER_ERR_CODEC;
-    ++d->decoded_outputs;
-    if(d->config.should_present&&!d->config.should_present(d->config.user))return VIDEO_DECODER_OK;
     const auto &sps = d->sets.sps[d->sets.active_sps];
-    const uint32_t sw = image.iWidth, sh = image.iHeight;
-    const uint32_t pw = d->config.panel_width, ph = d->config.panel_height;
-    const uint64_t aspect_w = uint64_t(sw) * sps.sar_width;
-    const uint64_t aspect_h = uint64_t(sh) * sps.sar_height;
-    uint32_t dw, dh;
-    if (uint64_t(pw) * aspect_h <= uint64_t(ph) * aspect_w) {
-        dw = pw;
-        dh = uint32_t(std::max(uint64_t(1), uint64_t(pw) * aspect_h / aspect_w));
-    } else {
-        dh = ph;
-        dw = uint32_t(std::max(uint64_t(1), uint64_t(ph) * aspect_w / aspect_h));
-    }
-    const uint32_t left = (pw - dw) / 2, top = (ph - dh) / 2;
-    std::memset(d->pixels, 0, d->pixel_bytes);
-    for (uint32_t x = 0; x < dw; ++x) d->sample_x[x] = uint16_t(x * sw / dw);
-    uint32_t previous_sy=UINT32_MAX;
-    const uint16_t *previous_row=nullptr;
-    for (uint32_t y = 0; y < dh; ++y) {
-        const uint32_t sy = y * sh / dh;
-        uint16_t *dst = d->pixels + size_t(y + top) * pw + left;
-        if(sy==previous_sy){
-            std::memcpy(dst,previous_row,size_t(dw)*sizeof(uint16_t));
-            continue;
-        }
-        const uint8_t *yp = planes[0] + size_t(sy) * image.iStride[0];
-        const uint8_t *up = planes[1] + size_t(sy / 2) * image.iStride[1];
-        const uint8_t *vp = planes[2] + size_t(sy / 2) * image.iStride[1];
-        uint32_t previous_sx=UINT32_MAX;
-        uint16_t color=0;
-        for (uint32_t x = 0; x < dw; ++x) {
-            const uint32_t sx = d->sample_x[x];
-            if(sx!=previous_sx){
-                color=yuv565(yp[sx], up[sx / 2], vp[sx / 2], sps.full_range, sps.bt709);
-                previous_sx=sx;
-            }
-            dst[x]=color;
-        }
-        previous_sy=sy;previous_row=dst;
-    }
-    video_decoder_frame_t frame{};
-    frame.rgb565 = d->pixels;
-    frame.width = uint16_t(pw); frame.height = uint16_t(ph);
-    frame.stride_bytes = size_t(pw) * sizeof(uint16_t);
-    frame.view_rect = {uint16_t(left), uint16_t(top), uint16_t(dw), uint16_t(dh)};
-    frame.source_width = uint16_t(sw); frame.source_height = uint16_t(sh);
-    frame.frame_number = ++d->frames;
+    video_decoder_yuv_frame_t raw{};
+    for(unsigned i=0;i<3;++i){raw.planes[i]=planes[i];raw.strides[i]=size_t(image.iStride[i?1:0]);}
+    raw.width=uint16_t(image.iWidth);raw.height=uint16_t(image.iHeight);
+    raw.sar_width=sps.sar_width;raw.sar_height=sps.sar_height;
+    raw.full_range=sps.full_range;raw.bt709=sps.bt709;
+    raw.frame_number=++d->decoded_outputs;
+    if(d->config.should_present&&!d->config.should_present(d->config.user))return VIDEO_DECODER_OK;
 #ifdef ESP_PLATFORM
-    const int64_t converted=esp_timer_get_time();
+    const int64_t output_started=esp_timer_get_time();
 #endif
-    d->config.callback(d->config.user, &frame);
+    int result=VIDEO_DECODER_OK;
+    if(d->config.yuv_callback)d->config.yuv_callback(d->config.user,&raw);
+    else result=video_converter_render(d->converter,&raw);
 #ifdef ESP_PLATFORM
-    if(d->frames<=3||d->frames%30==0)
-        ESP_LOGI("video_perf","output=%llu frame=%llu source=%ux%u ref=%d bytes=%u codec=%lldus convert=%lldus publish=%lldus",
-            (unsigned long long)d->decoded_outputs,(unsigned long long)d->frames,frame.source_width,frame.source_height,
-            d->last_nri,(unsigned)d->last_au_bytes,
-            (long long)d->last_codec_us,(long long)(converted-convert_started),(long long)(esp_timer_get_time()-converted));
+    if(d->decoded_outputs<=3||d->decoded_outputs%30==0)
+        ESP_LOGI("video_perf","output=%llu source=%ux%u ref=%d bytes=%u codec=%lldus snapshot=%lldus",
+            (unsigned long long)d->decoded_outputs,raw.width,raw.height,d->last_nri,(unsigned)d->last_au_bytes,
+            (long long)d->last_codec_us,(long long)(esp_timer_get_time()-output_started));
 #endif
-    return VIDEO_DECODER_OK;
+    return result;
 }
 
 int decode_result(DECODING_STATE state) {
@@ -456,7 +419,7 @@ extern "C" int video_decoder_init(const video_decoder_config_t *config,
                                    video_decoder_t **out_decoder) {
     if (!out_decoder) return VIDEO_DECODER_ERR_ARGUMENT;
     *out_decoder = nullptr;
-    if (!config || !config->callback || !config->panel_width || !config->panel_height ||
+    if (!config || (!!config->callback == !!config->yuv_callback) || !config->panel_width || !config->panel_height ||
         config->panel_width > kMaxDimension || config->panel_height > kMaxDimension ||
         uint64_t(config->panel_width) * config->panel_height > kMaxVisiblePixels)
         return VIDEO_DECODER_ERR_ARGUMENT;
@@ -469,10 +432,10 @@ extern "C" int video_decoder_init(const video_decoder_config_t *config,
     video_decoder_t *d = new (std::nothrow) video_decoder_t;
     if (!d) return VIDEO_DECODER_ERR_MEMORY;
     d->config = c;
-    d->pixel_bytes = size_t(c.panel_width) * c.panel_height * sizeof(uint16_t);
-    d->pixels = static_cast<uint16_t *>(allocate_pixels(d->pixel_bytes + size_t(c.panel_width) * sizeof(uint16_t)));
-    if (!d->pixels) { delete d; return VIDEO_DECODER_ERR_MEMORY; }
-    d->sample_x = d->pixels + size_t(c.panel_width) * c.panel_height;
+    if(c.callback){
+        int rc=video_converter_init(c.panel_width,c.panel_height,c.callback,c.user,&d->converter);
+        if(rc){delete d;return rc;}
+    }
     const int rc = initialize_codec(d);
     if (rc) { video_decoder_destroy(d); return rc; }
     *out_decoder = d;
@@ -534,7 +497,7 @@ extern "C" int video_decoder_reset(video_decoder_t *d) {
     if (!d) return VIDEO_DECODER_ERR_ARGUMENT;
     destroy_codec(d);
     d->sets = ParameterSets{};
-    d->frames = 0;
+    if(d->converter)d->converter->frames=0;
     d->decoded_outputs = 0;
     d->flushed = false;
     return initialize_codec(d);
@@ -543,8 +506,82 @@ extern "C" int video_decoder_reset(video_decoder_t *d) {
 extern "C" void video_decoder_destroy(video_decoder_t *d) {
     if (!d) return;
     destroy_codec(d);
-    std::free(d->pixels);
+    video_converter_destroy(d->converter);
     delete d;
+}
+
+extern "C" int video_converter_init(uint16_t width,uint16_t height,video_decoder_frame_cb_t callback,
+                                     void *user,video_converter_t **out){
+    if(!out)return VIDEO_DECODER_ERR_ARGUMENT;
+    *out=nullptr;
+    if(!callback||!width||!height||width>kMaxDimension||height>kMaxDimension||
+       uint64_t(width)*height>kMaxVisiblePixels)return VIDEO_DECODER_ERR_ARGUMENT;
+    auto *d=new(std::nothrow) video_converter_t;
+    if(!d)return VIDEO_DECODER_ERR_MEMORY;
+    d->width=width;d->height=height;d->callback=callback;d->user=user;
+    d->pixel_bytes=size_t(width)*height*sizeof(uint16_t);
+    d->pixels=static_cast<uint16_t *>(allocate_pixels(d->pixel_bytes+size_t(width)*sizeof(uint16_t)));
+    if(!d->pixels){delete d;return VIDEO_DECODER_ERR_MEMORY;}
+    d->sample_x=d->pixels+size_t(width)*height;*out=d;return VIDEO_DECODER_OK;
+}
+
+extern "C" int video_converter_render(video_converter_t *d,const video_decoder_yuv_frame_t *raw){
+    if(!d||!raw||!raw->width||!raw->height||!raw->sar_width||!raw->sar_height||
+       raw->width>kMaxDimension||raw->height>kMaxDimension||
+       uint64_t(raw->width)*raw->height>kMaxVisiblePixels)return VIDEO_DECODER_ERR_ARGUMENT;
+    for(unsigned i=0;i<3;++i)
+        if(!raw->planes[i]||raw->strides[i]<(i?(raw->width+1U)/2U:raw->width))return VIDEO_DECODER_ERR_ARGUMENT;
+    const auto &image=*raw;
+    const uint32_t sw = image.width, sh = image.height;
+    const uint32_t pw = d->width, ph = d->height;
+    const uint64_t aspect_w = uint64_t(sw) * image.sar_width;
+    const uint64_t aspect_h = uint64_t(sh) * image.sar_height;
+    uint32_t dw, dh;
+    if (uint64_t(pw) * aspect_h <= uint64_t(ph) * aspect_w) {
+        dw = pw;
+        dh = uint32_t(std::max(uint64_t(1), uint64_t(pw) * aspect_h / aspect_w));
+    } else {
+        dh = ph;
+        dw = uint32_t(std::max(uint64_t(1), uint64_t(ph) * aspect_w / aspect_h));
+    }
+    const uint32_t left = (pw - dw) / 2, top = (ph - dh) / 2;
+    std::memset(d->pixels, 0, d->pixel_bytes);
+    for (uint32_t x = 0; x < dw; ++x) d->sample_x[x] = uint16_t(x * sw / dw);
+    uint32_t previous_sy=UINT32_MAX;
+    const uint16_t *previous_row=nullptr;
+    for (uint32_t y = 0; y < dh; ++y) {
+        const uint32_t sy = y * sh / dh;
+        uint16_t *dst = d->pixels + size_t(y + top) * pw + left;
+        if(sy==previous_sy){
+            std::memcpy(dst,previous_row,size_t(dw)*sizeof(uint16_t));
+            continue;
+        }
+        const uint8_t *yp = image.planes[0] + size_t(sy) * image.strides[0];
+        const uint8_t *up = image.planes[1] + size_t(sy / 2) * image.strides[1];
+        const uint8_t *vp = image.planes[2] + size_t(sy / 2) * image.strides[2];
+        uint32_t previous_sx=UINT32_MAX;
+        uint16_t color=0;
+        for (uint32_t x = 0; x < dw; ++x) {
+            const uint32_t sx = d->sample_x[x];
+            if(sx!=previous_sx){
+                color=yuv565(yp[sx], up[sx / 2], vp[sx / 2], image.full_range, image.bt709);
+                previous_sx=sx;
+            }
+            dst[x]=color;
+        }
+        previous_sy=sy;previous_row=dst;
+    }
+    video_decoder_frame_t frame{};
+    frame.rgb565=d->pixels;frame.width=uint16_t(pw);frame.height=uint16_t(ph);
+    frame.stride_bytes=size_t(pw)*sizeof(uint16_t);
+    frame.view_rect={uint16_t(left),uint16_t(top),uint16_t(dw),uint16_t(dh)};
+    frame.source_width=uint16_t(sw);frame.source_height=uint16_t(sh);frame.frame_number=++d->frames;
+    d->callback(d->user,&frame);return VIDEO_DECODER_OK;
+}
+
+extern "C" void video_converter_destroy(video_converter_t *d){
+    if(!d)return;
+    std::free(d->pixels);delete d;
 }
 
 extern "C" const char *video_decoder_error_string(int result) {

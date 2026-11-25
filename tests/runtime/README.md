@@ -41,8 +41,10 @@ Covered regressions:
 - The compressed-memory budget includes the in-flight decoder AU.
 - Overflow and lost/config-changed video require a fresh IDR.
 - An old epoch cannot display a frame or erase a newer epoch's queue.
-- With backlog, outputs within 150 ms of the last completed publication are
-  skipped; an obsolete epoch cannot request RGB conversion.
+- The pending I420 image is replaced by newer outputs; padded source strides
+  are copied into owned planes and the active consumer image stays unchanged.
+- Reset clears pending images and prevents obsolete output from reaching UI;
+  allocation failure preserves the previously pending image.
 - Decoder reset failure prevents a subsequent push and recovers on a later IDR.
 - Allocation failure and an individually oversized AU are rejected.
 - `SHOWN` counts only new video frames successfully submitted to the board API,

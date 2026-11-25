@@ -8,8 +8,9 @@ MetalioClaw4 已安装 P4 Native Display，并通过 USB 将用户指定的 `z-h
 后续已完成真实 Mac 的 AirPlay 配对、视频解码/显示及 BLE 加密和报告订阅。
 用户确认键盘初始化测试通过、鼠标能移动；Mac 实际收到左键按下/抬起。
 超时修正版曾持续显示数百帧，但用户报告延迟不可接受；实测积压约 2–3 秒。
-当前已安装默认快速同步档（FastSync），加入低分辨率请求、两帧队列及跳过过时输出。
-设备 `/info` 的 360×360 与独立身份已经核实，新版 Mac 收流和实际延迟仍待重连验证。
+首版 FastSync 已实际显示，用户确认有所改善；Mac 仍发送 720×540，并未采纳 360×360 请求。
+当前已安装最新图片优先版：解码与显示转换分开，只保留一个可被新图覆盖的待显示槽。
+启动、联网和 BLE 自动恢复已核实，最新图片优先版的视频会话仍待重连验证。
 720×720 原生桌面和绑定副屏的绝对触控仍未完成；本机 Mac 选择的是 800×600。
 本地 `origin` 为 `git@github.com:zhuzhe1983/esp-airplay-display-extend-with-ble-hid.git`；按用户要求未推送。
 
@@ -35,9 +36,9 @@ python tools/build.py metalio_claw4 build
 使用 ESP-IDF 5.5.4、NV3051F、32 MB Flash、早期 P4 revision 0.x/1.x 配置。
 当前安装镜像为 `firmware/build-metalio_claw4/p4_native_display.bin`：
 
-- 大小：1,726,080 字节。
-- SHA-256：`cd0822abfe0c46ff5cd469df4b72afea269247166acc14ce21c15c0e88d7075a`。
-- 本机安装副本和验证清单：`.build/device-20261125/fastsync-update/`。
+- 大小：1,728,304 字节。
+- SHA-256：`8cd1bfa2019113a7490e1e6d8b59f1666d5fa1dd57a79a9e1116af29b0fb0521`。
+- 本机安装副本和验证清单：`.build/device-20261125/latest-frame-update/`。
 - 该诊断镜像显式启用 `P4_BLE_CRYPTO_PROBE=ON`，只记录测试结果及返回码。普通新构建目录默认关闭，切换说明见 [实物探针](../tests/on_device/README.md)。
 - USB 配网版 `afde8ab…`、首次全屏版 `449b…`、广播修正版 `819d…` 及加密对照镜像留在本机忽略目录，用于追溯。
 - 首次下载版镜像为 1,674,256 字节，SHA-256 `2cdf0a76aa34b3a7465c510c3f2c78d811b6950da00221369ae533e75328956b`，后来被 USB 配网版替换。
@@ -49,7 +50,7 @@ python tools/build.py metalio_claw4 build
 - 实际分区表在 `0x8000`，MD5 有效；`ota_0` 为 `0x200000`、12 MiB，`ota_1` 为 `0xe00000`、12 MiB。
 - 两份 OTA 记录 CRC 均有效，较新 sequence 2、state VALID，选择 `ota_1`。
 - 原 `ota_0` 为 `xiaozhi` 2.0.5（IDF 5.5.4）；原 `ota_1` 为 `esp_agent` fdb706f-dirty（IDF 6.0.2），包含 NV3051F 驱动。
-- 当前只更新 `ota_1`：镜像区间 `0xe00000–0xfa5680`，末地址不含；Flash 扇区擦写范围 `0xe00000–0xfa6000`，末地址不含。
+- 当前只更新 `ota_1`：镜像区间 `0xe00000–0xfa5f30`，末地址不含；Flash 扇区擦写范围 `0xe00000–0xfa6000`，末地址不含。
 - 没有使用工程默认的整套 `idf.py flash`，没有改写 bootloader、分区表、原厂 `ota_0`、C5 或 eFuse。运行中的应用在 NVS 保存配网、蓝牙绑定、AirPlay 身份和显示档位。
 
 ## 备份与校验
@@ -128,9 +129,10 @@ Mac 分别连接 `MetalioClaw4 Display FastSync` 或 `MetalioClaw4 Display Sharp
 因此新版的两档采用独立、持久的 AirPlay 设备 ID、公钥、PI 和显示 UUID。
 快速同步的 deviceID 为本地管理的 `32:ED:A0:E1:8D:4A`，不修改无线接口地址。
 
-当前压缩队列为两帧。积压时距上次发布结束不足 150 ms 的输出跳过 RGB 转换及显示，
-仍完成参考帧解码。最近邻放大复用重复源像素与源行，减少颜色运算。
-这属于抽帧显示，不能保证 CPU 在所有复杂画面下都能实时追赶。
+首版 FastSync 的压缩队列为两帧，积压时按 150 ms 间隔省略部分 RGB 输出。
+`fastsync-connection.log` 后续记录实际编码仍为 720×540，近 900 次显示、零压缩丢帧
+及零解码错误，队列采样约 0–340 ms，RGB 转换仍约 110 ms。用户确认比旧版改善，
+进一步要求丢弃前面旧图、优先最新画面。
 
 `.build/claw4-latency-build.log`、`.build/host-fastsync-tests.log`、
 `.build/ui-fastsync-render.log` 记录编译与测试通过，包含真实 AVC 的 B 帧重排、
@@ -139,7 +141,25 @@ Mac 分别连接 `MetalioClaw4 Display FastSync` 或 `MetalioClaw4 Display Sharp
 有效 EDID 校验和及独立身份；`fastsync-connection.log` 记录启动、Wi-Fi 和 BLE 自动恢复。
 `fastsync-mode-switch.json` 记录实物双向切档通过，恢复快速同步后公钥保持一致，
 两档的公钥和广播身份各自独立，最终保留快速同步档。
-这些结果不等于已经测得新版端到端延迟，仍需 Mac 连接该新名称后测量。
+独立身份并未使 Mac 采纳低分辨率请求；该方法不能单独解决性能问题。
+
+## 最新画面优先管线
+
+最新安装版把 AVC 解码放在 core 1，把 RGB 转换与 UI 发布放到独立的 core 0 任务。
+解码完成后将 I420 深拷贝到自有缓冲：一个由转换任务独占，另一个待显示槽随新图到来
+直接覆盖旧图；取走后不再回头补播旧图。旧会话的待显示图和正在转换的图均由 epoch
+检查取消。参考帧仍按顺序解码，不倒序推送压缩 P/B 包。两档共用这个显示策略。
+
+`.build/host-latest-tests.log` 记录真实 AVC、协议、输入和运行时测试通过；
+`.build/decoder-latest-asan.log` 与 `.build/runtime-latest-asan.log` 记录内存检查通过。
+测试包括 codec 销毁后转换保存的最后一帧并与 FFmpeg 对照、源 stride 填充、覆盖待显示
+图片时保护正在转换的图片、重连取消旧图，以及分配失败时保留已有待显示图。
+`.build/claw4-latest-build.log` 为实机编译日志；镜像读回与受保护前缀校验均通过。
+
+`connect-debug/latest-connection.log` 记录当前启动及 Wi-Fi/BLE 自动恢复。
+USB 状态提供 `decoded_outputs`、`replaced_outputs` 和 `frame_age_ms`，分别表示成功
+复制的输出、被覆盖的待显示输出，以及快照到 UI 的年龄；最后一项不是端到端延迟。
+当前尚待 Mac 重新连接同一 FastSync 名称后测量实际替换数量和延迟。
 
 ## USB 连接和亮边诊断边界
 
