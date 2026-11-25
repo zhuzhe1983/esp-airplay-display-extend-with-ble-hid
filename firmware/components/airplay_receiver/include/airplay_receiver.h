@@ -33,6 +33,7 @@ typedef struct {
     uint16_t height;
     uint8_t max_fps;     /* Requested maximum FPS; not a guarantee. */
     uint16_t width_mm, height_mm; /* Physical display size; both zero if unknown. */
+    uint8_t profile_id; /* 0: hardware identity, 1: distinct local virtual identity. */
     void (*frame_cb)(const airplay_receiver_frame_t *frame, void *ctx);
     void (*state_cb)(airplay_receiver_state_t state, const char *detail, void *ctx);
     void *ctx;

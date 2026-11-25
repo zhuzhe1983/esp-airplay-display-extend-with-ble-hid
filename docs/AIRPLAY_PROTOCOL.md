@@ -68,13 +68,13 @@ airplay_receiver_state_t airplay_receiver_get_state(void);
 - binary plist 对象数最多 4096；偏移、长度、对象表、容器项数均用不溢出的边界检查。输出 plist 最多 64 KiB。
 - 最大镜像 buffer、解密副本、恢复缓存、带 SPS/PPS 的 IDR 可能合计接近 8 MiB PSRAM；另需解码器参考帧、解码/渲染队列及 LCD framebuffer。必须基于真实流记录 PSRAM 最小剩余值，不能只按压缩平均码率估内存。
 - 建议 `CONFIG_LWIP_MAX_SOCKETS` 至少为 20，为 mDNS、应用服务和网络组件保留容量。RTSP 和镜像任务各用 12 KiB 内部 RAM stack。
-- 接收身份通过 NVS `p4_airplay/ed25519_seed` 持久保存；日志不打印私钥或会话 AES key。此原型没有 PIN/白名单配对 UI，因此在同一局域网内有访问能力的发送端可以尝试连接。
+- 清晰档身份通过 NVS `p4_airplay/ed25519_seed` 持久保存，快速同步档使用 `smooth_seed`。后者另用本地管理的单播 deviceID、PI 和 display UUID，避免 macOS 将旧显示能力缓存复用于低分辨率档；不改变 Wi-Fi/BLE 地址。日志不打印私钥或会话 AES key。此原型没有 PIN/白名单配对 UI，因此在同一局域网内有访问能力的发送端可以尝试连接。
 
 ## H.264 profile 与性能必须单独验证
 
 `width`、`height`、`maxFPS` 是 `/info` 里的接收端请求，发送端可能选择不同参数。本组件不会假装能用一个 TXT 位或修改 SPS profile 字节把 High/CABAC 视频变成 Baseline。
 
-Claw4 的描述为 720×720、最高 30 fps、物理尺寸约 71×71 mm；后者由厂家标注的
+Claw4 清晰档的描述为 720×720，快速同步档为 360×360，均最高 30 fps、物理尺寸约 71×71 mm；后者由厂家标注的
 [3.95 英寸方屏](https://github.com/CloudZao/MetalioClaw4#1-product-overview)对角线换算并取整。
 显示描述包含自建的 EDID 1.4（开发设备标识 PND），只列出首选原生时序；
 校验和、像素尺寸、物理尺寸及 30 Hz 时钟有主机测试。2026-11-25 的 Mac 日志已经读到

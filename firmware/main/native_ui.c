@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "native_ui.h"
+#include "display_profile.h"
 #include "display_board.h"
 #include "input_core.h"
 #include "ui_font.h"
@@ -28,7 +29,8 @@ static uint16_t width,height;
 static bool have_video,dirty=true,keyboard,info,was_down,blocked,reset_fired,reset_armed,touch_fault;
 static bool controls=true,recovering,edge_capture,edge_done,edge_show,edge_top,edge_tap;
 static int edge_x,edge_y;
-typedef enum { UI_ACTION_NONE=0, UI_ACTION_PAIR=1, UI_ACTION_RESET_WIFI=2 } ui_action_t;
+typedef enum { UI_ACTION_NONE=0, UI_ACTION_PAIR=1, UI_ACTION_RESET_WIFI=2, UI_ACTION_MODE=3 } ui_action_t;
+static bool mode_error;
 static char net_a[64]="Starting",net_b[64]="",air_detail[96]="Waiting for Wi-Fi",ble_detail[96]="Starting";
 static network_state_t net_state=NETWORK_STARTING;
 static airplay_receiver_state_t air_state=AIRPLAY_RECEIVER_STOPPED;
@@ -112,7 +114,7 @@ static void draw(void){
             text(24,y,"TAP: CLICK   HOLD: DRAG",2,FG);y+=27;
             text(24,y,"TWO FINGERS: SCROLL / RIGHT CLICK",2,FG);y+=27;
             text(24,y,"IME: CTRL+SPACE (MAC INPUT SOURCE)",2,FG);y+=27;
-            text(24,y,"EXPERIMENTAL AIRPLAY + STANDARD HID",2,AMBER);
+            text(24,y,"MODE CHANGE: RECONNECT AIRPLAY",2,AMBER);
             button(width-236,toolbar_y()-65,220,50,"WIFI RESET",reset_armed);
             text(20,toolbar_y()-48,"HOLD RESET FOR 2 SECONDS",2,MUTED);
         }
@@ -121,10 +123,11 @@ static void draw(void){
         rect(0,keyboard_y(),width,toolbar_y()-keyboard_y(),BG);
         for(int i=0;i<key_count;i++)button(keys[i].x,keys[i].y,keys[i].w,keys[i].h,keys[i].label,i==pressed_key||(keys[i].special&&(modifiers&keys[i].modifier)));
     }
-    const char *labels[]={keyboard?"HIDE KEYS":"KEYBOARD","PAIR","INFO",input.absolute?"ABS TEST":"TOUCHPAD"};
+    const char *labels[]={keyboard?"HIDE KEYS":"KEYBOARD","PAIR","INFO",
+        mode_error?"MODE ERR":display_profile_get()==DISPLAY_SMOOTH?"FASTSYNC":"SHARP",input.absolute?"ABS TEST":"TOUCHPAD"};
     if(have_video)rect(width/2-40,controls_handle_y()+7,80,4,MUTED);
     rect(0,toolbar_y(),width,58,BG);
-    for(int i=0;i<4;i++)button(4+i*(width-8)/4,toolbar_y()+5,(width-8)/4-4,48,labels[i],(i==0&&keyboard)||(i==2&&info));
+    for(int i=0;i<5;i++)button(4+i*(width-8)/5,toolbar_y()+5,(width-8)/5-4,48,labels[i],(i==0&&keyboard)||(i==2&&info));
     if(have_video&&recovering&&!info){
         rect(0,52,width,36,BG);
         text(16,62,"WAITING FOR VIDEO - LAST FRAME",2,AMBER);
@@ -172,11 +175,12 @@ static ui_action_t touch(const board_touch_point_t *points,int count,uint32_t no
         if(y>=toolbar_y()){
             blocked=true;input_engine_cancel(&input);release_key();
             if(count!=1)return UI_ACTION_NONE;
-            int item=x*4/width;
+            int item=x*5/width;
             if(item==0){keyboard=!keyboard;info=false;modifiers=0;}
             if(item==1){dirty=true;return UI_ACTION_PAIR;}
             if(item==2){info=!info;keyboard=false;}
-            if(item==3){
+            if(item==3){dirty=true;return UI_ACTION_MODE;}
+            if(item==4){
 #if CONFIG_P4_INPUT_ABSOLUTE
                 input.absolute=!input.absolute;
 #endif
@@ -241,6 +245,10 @@ static ui_action_t touch(const board_touch_point_t *points,int count,uint32_t no
 static void execute_action(ui_action_t action){
     if(action==UI_ACTION_PAIR)input_ble_pairing_window();
     else if(action==UI_ACTION_RESET_WIFI)app_network_forget_wifi();
+    else if(action==UI_ACTION_MODE){
+        esp_err_t result=display_profile_set(display_profile_get()==DISPLAY_SMOOTH?DISPLAY_SHARP:DISPLAY_SMOOTH);
+        xSemaphoreTake(lock,portMAX_DELAY);mode_error=result!=ESP_OK;dirty=true;xSemaphoreGive(lock);
+    }
 }
 static void ui_task(void *p){
     (void)p;uint32_t last_present=0;

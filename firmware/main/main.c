@@ -18,11 +18,12 @@
 #include "input_ble.h"
 #include "app_network.h"
 #include "native_ui.h"
+#include "display_profile.h"
 
 #define MAX_ACCESS_UNIT_BYTES (1024U * 1024U)
 #define INGRESS_WAIT_US 2000000
 static const char *TAG = "native_display";
-typedef struct { uint8_t *data; size_t len; unsigned epoch; } access_unit_t;
+typedef struct { uint8_t *data; size_t len; unsigned epoch; int64_t received_us; } access_unit_t;
 static QueueHandle_t frame_queue;
 static SemaphoreHandle_t pipeline_lock;
 static TaskHandle_t decode_task_handle;
@@ -33,7 +34,7 @@ static size_t queued_bytes, inflight_bytes;
 static bool needs_idr = true;
 static uint32_t dropped;
 static video_decoder_t *decoder;
-typedef struct { unsigned current_epoch; } decode_context_t;
+typedef struct { unsigned current_epoch; int64_t last_present_us; } decode_context_t;
 static decode_context_t decode_ctx;
 
 static void count_drop_locked(void) {
@@ -110,7 +111,7 @@ static void received_frame(const airplay_receiver_frame_t *frame, void *ctx) {
         count_drop_locked();
         goto done;
     }
-    access_unit_t unit = {.len = frame->len, .epoch = atomic_load(&epoch)};
+    access_unit_t unit = {.len = frame->len, .epoch = atomic_load(&epoch), .received_us=esp_timer_get_time()};
     unit.data = heap_caps_malloc(unit.len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!unit.data) {
         flush_locked();
@@ -157,10 +158,25 @@ static void receiver_state(airplay_receiver_state_t state, const char *detail, v
 }
 
 static void decoded_frame(void *ctx, const video_decoder_frame_t *frame) {
-    const decode_context_t *context = ctx;
+    decode_context_t *context = ctx;
     xSemaphoreTake(pipeline_lock, portMAX_DELAY);
-    if (context->current_epoch == atomic_load(&epoch)) native_ui_video(NULL, frame);
+    if (context->current_epoch == atomic_load(&epoch)) {
+        native_ui_video(NULL, frame);
+        context->last_present_us=esp_timer_get_time();
+    }
     xSemaphoreGive(pipeline_lock);
+}
+
+static bool should_present_frame(void *ctx){
+    decode_context_t *context=ctx;
+    xSemaphoreTake(pipeline_lock,portMAX_DELAY);
+    bool current=context->current_epoch==atomic_load(&epoch);
+    bool backlog=uxQueueMessagesWaiting(frame_queue)>0;
+    xSemaphoreGive(pipeline_lock);
+    if(!current)return false;
+    int64_t now=esp_timer_get_time();
+    if(backlog&&context->last_present_us&&now-context->last_present_us<150000)return false;
+    return true;
 }
 
 /* Every queue mutation is under the same mutex as its byte accounting. Task
@@ -189,6 +205,7 @@ static void decode_task(void *arg) {
     access_unit_t unit;
     unsigned seen_epoch = 0;
     bool initialized_for_epoch = false;
+    unsigned perf_count=0;
     for (;;) {
         if (!take_access_unit(&unit)) {
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
@@ -209,6 +226,7 @@ static void decode_task(void *arg) {
                 continue;
             }
             seen_epoch = unit.epoch;
+            decode_ctx.last_present_us=0;
             initialized_for_epoch = true;
         }
         /* Reset may have taken long enough for the network to end this epoch. */
@@ -217,6 +235,13 @@ static void decode_task(void *arg) {
             continue;
         }
         decode_ctx.current_epoch = unit.epoch;
+        if(++perf_count%30==0){
+            xSemaphoreTake(pipeline_lock,portMAX_DELAY);
+            unsigned count=(unsigned)uxQueueMessagesWaiting(frame_queue),bytes=(unsigned)queued_bytes;
+            xSemaphoreGive(pipeline_lock);
+            ESP_LOGI("pipeline_perf","queue_age=%lldus queued=%u bytes=%u",
+                (long long)(esp_timer_get_time()-unit.received_us),count,bytes);
+        }
         const int error = video_decoder_push(decoder, unit.data, unit.len);
         retire_access_unit(&unit);
         if (error != VIDEO_DECODER_OK) {
@@ -235,6 +260,7 @@ void app_main(void) {
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+    display_profile_init();
     ESP_LOGI(TAG, "P4 Native Display 0.1.0 experimental; board %s", board_info()->name);
     err = board_init();
     if (err != ESP_OK) {
@@ -242,7 +268,7 @@ void app_main(void) {
         return;
     }
     ESP_ERROR_CHECK(native_ui_start());
-    frame_queue = xQueueCreate(12, sizeof(access_unit_t));
+    frame_queue = xQueueCreate(2, sizeof(access_unit_t));
     pipeline_lock = xSemaphoreCreateMutex();
     if (!frame_queue || !pipeline_lock) {
         if (frame_queue) vQueueDelete(frame_queue);
@@ -255,7 +281,7 @@ void app_main(void) {
         .panel_width = board_info()->width, .panel_height = board_info()->height,
         .max_input_width = 1280, .max_input_height = 1280,
         .max_access_unit_bytes = MAX_ACCESS_UNIT_BYTES,
-        .callback = decoded_frame, .user = &decode_ctx
+        .callback = decoded_frame, .user = &decode_ctx, .should_present=should_present_frame
     };
     const int result = video_decoder_init(&video_config, &decoder);
     if (result != VIDEO_DECODER_OK) {
@@ -288,13 +314,27 @@ void app_main(void) {
     err = app_network_start_usb_provisioning();
     if (err != ESP_OK) ESP_LOGW(TAG, "USB provisioning unavailable: %s", esp_err_to_name(err));
     bool receiving = false;
+    display_profile_t active_profile=display_profile_get();
     for (;;) {
         const bool online = app_network_ready();
+        display_profile_t requested_profile=display_profile_get();
+        if(receiving&&requested_profile!=active_profile){
+            err=airplay_receiver_stop();
+            if(err==ESP_OK){receiving=false;reset_pipeline();}
+            else ESP_LOGW(TAG,"Mode switch stop pending: %s",esp_err_to_name(err));
+        }
         if (online && !receiving) {
+            active_profile=requested_profile;
+            display_profile_config_t mode=display_profile_config(active_profile);
+            char receiver_name[49];
+            snprintf(receiver_name,sizeof receiver_name,"%.38s %s",app_network_device_name(),
+                active_profile==DISPLAY_SMOOTH?"FastSync":"Sharp");
+            ESP_LOGI(TAG,"Video mode %s: %ux%u maxFPS %u",display_profile_name(active_profile),mode.width,mode.height,mode.fps);
             airplay_receiver_config_t config = {
-                .name = app_network_device_name(), .width = CONFIG_P4_STREAM_WIDTH,
-                .height = CONFIG_P4_STREAM_HEIGHT, .max_fps = CONFIG_P4_STREAM_FPS,
+                .name = receiver_name, .width = mode.width,
+                .height = mode.height, .max_fps = mode.fps,
                 .width_mm = CONFIG_P4_DISPLAY_WIDTH_MM, .height_mm = CONFIG_P4_DISPLAY_HEIGHT_MM,
+                .profile_id = active_profile==DISPLAY_SMOOTH?1:0,
                 .frame_cb = received_frame, .state_cb = receiver_state
             };
             err = airplay_receiver_start(&config);

@@ -14,7 +14,7 @@
 
 typedef struct { const char *k, *v; } kv;
 
-static char pk_hex[65], features[24], deviceid[18];
+static char pk_hex[65], features[24], deviceid[18], pi[37];
 static bool airplay_added, raop_added;
 
 static const kv *raop_txt(size_t *n) {
@@ -31,7 +31,7 @@ static const kv *raop_txt(size_t *n) {
 static const kv *airplay_txt(size_t *n) {
   static kv t[] = {
     {"deviceid", deviceid}, {"features", features}, {"pw", "false"}, {"flags", "0x4"},
-    {"model", AP_MODEL}, {"pk", pk_hex}, {"pi", AP_PI}, {"srcvers", AP_VERSION}, {"vv", "2"},
+    {"model", AP_MODEL}, {"pk", pk_hex}, {"pi", pi}, {"srcvers", AP_VERSION}, {"vv", "2"},
   };
   *n = sizeof t / sizeof t[0];
   return t;
@@ -46,6 +46,7 @@ static void init_strings(void) {
   for (int i = 0; i < 32; i++) snprintf(pk_hex + 2 * i, 3, "%02x", ap_pk[i]);
   snprintf(features, sizeof features, "0x%X,0x%X", (unsigned)(AP_FEATURES & 0xFFFFFFFF), (unsigned)(AP_FEATURES >> 32));
   ap_deviceid(deviceid);
+  snprintf(pi,sizeof pi,"%s",ap_identity_pi());
 }
 
 size_t ap_txt_record(bool airplay, uint8_t *out, size_t cap) {

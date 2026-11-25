@@ -12,5 +12,6 @@ cc -std=gnu17 -Wall -Wextra -Werror \
   -I"$runtime_root/firmware/components/input_bridge/include" \
   "$runtime_root/tests/runtime/runtime_test.c" \
   "$runtime_root/firmware/components/input_bridge/input_core.c" \
+  "$runtime_root/firmware/main/display_profile.c" \
   -o "$runtime_binary"
 "$runtime_binary" "$@"

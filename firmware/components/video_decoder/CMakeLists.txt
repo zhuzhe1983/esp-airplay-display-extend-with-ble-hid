@@ -14,7 +14,7 @@ if(COMMAND idf_component_register)
         INCLUDE_DIRS "include"
         PRIV_INCLUDE_DIRS ${VIDEO_PRIVATE_INCLUDES}
         REQUIRES pthread
-        PRIV_REQUIRES heap)
+        PRIV_REQUIRES heap esp_timer log)
     set(VIDEO_TARGET ${COMPONENT_LIB})
 else()
     add_library(video_decoder STATIC video_decoder.cpp ${OPENH264_SOURCES})

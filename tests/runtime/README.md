@@ -25,6 +25,8 @@ Covered regressions:
 
 - An idle touch poll and unchanged drop count do not schedule redraws.
 - Pairing can call back into the UI synchronously without holding its mutex.
+- The mode toolbar action runs outside the UI mutex, rejects invalid profiles,
+  and selects distinct small/large stream configurations.
 - Wi-Fi reset executes outside the mutex after a continuous two-second hold;
   leaving its button cancels that hold.
 - Letterbox pixels and UI overlays do not become video pointer gestures.
@@ -39,6 +41,8 @@ Covered regressions:
 - The compressed-memory budget includes the in-flight decoder AU.
 - Overflow and lost/config-changed video require a fresh IDR.
 - An old epoch cannot display a frame or erase a newer epoch's queue.
+- With backlog, outputs within 150 ms of the last completed publication are
+  skipped; an obsolete epoch cannot request RGB conversion.
 - Decoder reset failure prevents a subsequent push and recovers on a later IDR.
 - Allocation failure and an individually oversized AU are rejected.
 - `SHOWN` counts only new video frames successfully submitted to the board API,

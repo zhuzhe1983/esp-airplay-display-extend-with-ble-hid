@@ -41,6 +41,8 @@ static std::vector<Nal> nals(const std::vector<uint8_t> &bytes) {
 struct Capture {
     std::vector<uint8_t> reference;
     unsigned frames = 0;
+    unsigned panel_w = 80;
+    unsigned skip_outputs=0,decisions=0;
     unsigned panel_h = 80;
     uint64_t error_sum = 0;
     unsigned max_error = 0, comparisons = 0;
@@ -50,28 +52,30 @@ struct Capture {
 static void on_frame(void *user, const video_decoder_frame_t *frame) {
     auto &capture = *static_cast<Capture *>(user);
     CHECK(frame && frame->rgb565);
-    CHECK(frame->width == 80 && frame->height == capture.panel_h);
+    CHECK(frame->width == capture.panel_w && frame->height == capture.panel_h);
     CHECK(frame->source_width == 160 && frame->source_height == 96);
-    CHECK(frame->stride_bytes == 160);
+    CHECK(frame->stride_bytes == capture.panel_w*2);
     CHECK(frame->frame_number == capture.frames + 1);
-    CHECK(frame->view_rect.x == 0 && frame->view_rect.width == 80);
-    CHECK(frame->view_rect.height == 48);
-    CHECK(frame->view_rect.y == (capture.panel_h - 48) / 2);
+    const unsigned view_h=capture.panel_w*96/160;
+    CHECK(frame->view_rect.x == 0 && frame->view_rect.width == capture.panel_w);
+    CHECK(frame->view_rect.height == view_h);
+    CHECK(frame->view_rect.y == (capture.panel_h - view_h) / 2);
     CHECK(capture.frames < 8);
     uint64_t hash = 1469598103934665603ULL;
     for (unsigned y = 0; y < capture.panel_h; ++y) {
-        for (unsigned x = 0; x < 80; ++x) {
-            const uint16_t pixel = frame->rgb565[y * 80 + x];
-            if (y < frame->view_rect.y || y >= unsigned(frame->view_rect.y) + 48U)
+        for (unsigned x = 0; x < capture.panel_w; ++x) {
+            const uint16_t pixel = frame->rgb565[y * capture.panel_w + x];
+            if (y < frame->view_rect.y || y >= unsigned(frame->view_rect.y) + view_h)
                 CHECK(pixel == 0);
             hash = (hash ^ pixel) * 1099511628211ULL;
         }
     }
     capture.hashes.insert(hash);
-    unsigned sample = capture.frames * 40 * 3;
+    unsigned sample = (capture.frames+capture.skip_outputs) * 40 * 3;
     for (unsigned y = 5; y < 48; y += 10) {
         for (unsigned x = 5; x < 80; x += 10) {
-            const uint16_t p = frame->rgb565[(y + frame->view_rect.y) * 80 + x];
+            const unsigned ox=x*capture.panel_w/80,oy=y*view_h/48;
+            const uint16_t p = frame->rgb565[(oy + frame->view_rect.y) * capture.panel_w + ox];
             const unsigned rgb[] = {
                 unsigned((p >> 11) & 31) * 255 / 31,
                 unsigned((p >> 5) & 63) * 255 / 63,
@@ -147,6 +151,27 @@ static void run_profile(const std::string &profile) {
     CHECK(video_decoder_init(&config, &decoder) == VIDEO_DECODER_OK);
     push_stream(decoder, data);
     CHECK(capture.frames == 8);
+    video_decoder_destroy(decoder);
+
+    // Upscaling must preserve reference colors at 1.5x and 2x, including B-frame order.
+    for(unsigned size:{240u,320u}){
+        capture.frames=0;capture.panel_w=capture.panel_h=size;
+        capture.error_sum=capture.comparisons=capture.max_error=0;
+        config.panel_width=config.panel_height=uint16_t(size);
+        CHECK(video_decoder_init(&config,&decoder)==VIDEO_DECODER_OK);
+        push_stream(decoder,data);
+        CHECK(capture.frames==8&&double(capture.error_sum)/capture.comparisons<4.5&&capture.max_error<=40);
+        video_decoder_destroy(decoder);
+    }
+    capture.frames=capture.decisions=0;capture.skip_outputs=4;
+    capture.error_sum=capture.comparisons=capture.max_error=0;
+    config.should_present=[](void *user){
+        auto &c=*static_cast<Capture *>(user);return c.decisions++>=c.skip_outputs;
+    };
+    CHECK(video_decoder_init(&config,&decoder)==VIDEO_DECODER_OK);
+    push_stream(decoder,data);
+    CHECK(capture.decisions==8&&capture.frames==4);
+    CHECK(double(capture.error_sum)/capture.comparisons<4.5&&capture.max_error<=40);
     video_decoder_destroy(decoder);
 }
 

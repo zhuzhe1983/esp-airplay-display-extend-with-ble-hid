@@ -21,6 +21,7 @@
 #define AP_MODEL "AppleTV3,2"
 #define AP_VERSION "220.68"
 #define AP_PI "2e388006-13ba-4041-9a67-25dd4a43d536"
+#define AP_PI_SMOOTH "2e388006-13ba-4041-9a67-25dd4a43d537"
 // features bits as UxPlay sets them: mirroring, FairPlay auth, legacy pairing (bit 27) ...
 #ifdef NO_AIRPLAY_AUDIO
 // Clear SupportsAudio (bit 9), AudioRedundant (bit 10), and AudioFormats 0..3 (bits 18..21)
@@ -31,6 +32,9 @@
 #endif
 
 extern airplay_cfg ap_cfg;
+static inline const char *ap_identity_pi(void) {
+  return ap_cfg.profile_id ? AP_PI_SMOOTH : AP_PI;
+}
 extern uint8_t ap_pk[32];  // Ed25519 public key
 extern uint8_t ap_sk[64];  // libsodium secret key (seed + pk)
 void ap_log(const char *fmt, ...);

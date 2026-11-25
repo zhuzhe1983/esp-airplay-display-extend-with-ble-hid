@@ -98,7 +98,7 @@ static void handle_info(ap_conn *c, const ap_req *req, ap_resp *res) {
     bp_w_set(&w, root, "pk", bp_w_data(&w, ap_pk, 32));
     bp_w_set(&w, root, "features", bp_w_uint(&w, AP_FEATURES));
     bp_w_set(&w, root, "name", bp_w_string(&w, ap_cfg.name));
-    bp_w_set(&w, root, "pi", bp_w_string(&w, AP_PI));
+    bp_w_set(&w, root, "pi", bp_w_string(&w, ap_identity_pi()));
     bp_w_set(&w, root, "vv", bp_w_uint(&w, 2));
     bp_w_set(&w, root, "statusFlags", bp_w_uint(&w, 68));
     bp_w_set(&w, root, "keepAliveLowPower", bp_w_uint(&w, 1));
@@ -113,7 +113,8 @@ static void handle_info(ap_conn *c, const ap_req *req, ap_resp *res) {
       int displays = bp_w_array(&w), d = bp_w_dict(&w);
       bp_w_set(&w, root, "displays", displays);
       bp_w_append(&w, displays, d);
-      bp_w_set(&w, d, "uuid", bp_w_string(&w, "e0ff8a27-6738-3d56-8a16-cc53aacee925"));
+      bp_w_set(&w, d, "uuid", bp_w_string(&w, ap_cfg.profile_id
+        ? "e0ff8a27-6738-3d56-8a16-cc53aacee926" : "e0ff8a27-6738-3d56-8a16-cc53aacee925"));
       bp_w_set(&w, d, "widthPhysical", bp_w_uint(&w, ap_cfg.width_mm));
       bp_w_set(&w, d, "heightPhysical", bp_w_uint(&w, ap_cfg.height_mm));
       if(ap_cfg.width_mm&&ap_cfg.height_mm){

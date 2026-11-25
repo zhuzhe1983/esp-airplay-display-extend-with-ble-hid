@@ -86,6 +86,15 @@ static void ui_regressions(void){
     execute_action(action);assert(pairing_calls==1);
     sample_touch(0,0,0,1010);
 
+    display_profile_init();assert(display_profile_get()==DISPLAY_SMOOTH);
+    display_profile_config_t smooth=display_profile_config(DISPLAY_SMOOTH),sharp=display_profile_config(DISPLAY_SHARP);
+    assert(smooth.width*2==sharp.width&&smooth.height*2==sharp.height);
+    assert(display_profile_set((display_profile_t)2)==ESP_ERR_INVALID_ARG);
+    action=sample_touch(width*7/10,toolbar_y()+10,1,1100);
+    assert(action==UI_ACTION_MODE&&display_profile_get()==DISPLAY_SMOOTH);
+    execute_action(action);assert(display_profile_get()==DISPLAY_SHARP);
+    sample_touch(0,0,0,1110);
+
     info=true;
     action=sample_touch(width-100,toolbar_y()-40,1,2000);
     assert(action==UI_ACTION_NONE&&reset_armed);
@@ -171,7 +180,7 @@ static void reset_during_wait(void){
 }
 
 static void pipeline_regressions(void){
-    pipeline_lock=xSemaphoreCreateMutex();frame_queue=xQueueCreate(12,sizeof(access_unit_t));
+    pipeline_lock=xSemaphoreCreateMutex();frame_queue=xQueueCreate(2,sizeof(access_unit_t));
     decode_task_handle=(void *)1;decoder=(void *)1;
     feed(false,24);assert(queued_bytes==0&&needs_idr);
     feed(true,24);feed(false,24);assert(queued_bytes==48);
@@ -186,7 +195,12 @@ static void pipeline_regressions(void){
     uint64_t before=decoded_frames;
     video_decoder_frame_t frame={.rgb565=canvas,.width=width,.height=height,.stride_bytes=(size_t)width*2,
         .view_rect={0,0,width,height},.source_width=640,.source_height=360};
-    decode_context_t context={old.epoch};decoded_frame(&context,&frame);assert(decoded_frames==before);
+    decode_context_t context={.current_epoch=old.epoch};decoded_frame(&context,&frame);assert(decoded_frames==before);
+    assert(!should_present_frame(&context));
+    context.current_epoch=fresh;
+    assert(should_present_frame(&context));context.last_present_us=esp_timer_get_time();
+    assert(!should_present_frame(&context));
+    stub_time_us+=150000;assert(should_present_frame(&context));
     context.current_epoch=fresh;decoded_frame(&context,&frame);assert(decoded_frames==before+1);
     receiver_state(AIRPLAY_RECEIVER_WAITING_VIDEO,"Packet lost",NULL);
     assert(queued_bytes==0&&needs_idr&&have_video&&recovering);
@@ -252,6 +266,7 @@ static void diagnostic_video(void){
 
 static void render_pages(const char *directory){
     if(mkdir(directory,0777)!=0&&errno!=EEXIST){perror(directory);exit(1);}
+    assert(display_profile_set(DISPLAY_SMOOTH)==ESP_OK);
     const struct {const char *name;uint16_t h;} boards[]={
         {"metalio_claw4",720},{"m5stack_tab5",1280}
     };
@@ -268,6 +283,9 @@ static void render_pages(const char *directory){
         diagnostic_video();have_video=true;keyboard=false;controls=false;
         draw();save_ppm(directory,boards[b].name,"fullscreen");
         controls=true;draw();save_ppm(directory,boards[b].name,"controls");
+        assert(display_profile_set(DISPLAY_SHARP)==ESP_OK);
+        draw();save_ppm(directory,boards[b].name,"controls-sharp");
+        assert(display_profile_set(DISPLAY_SMOOTH)==ESP_OK);
         native_ui_airplay(AIRPLAY_RECEIVER_NO_VIDEO,"Host test: temporary video pause",NULL);
         draw();save_ppm(directory,boards[b].name,"waiting");recovering=false;
         keyboard=true;

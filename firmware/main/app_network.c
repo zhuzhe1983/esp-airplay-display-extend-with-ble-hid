@@ -18,6 +18,7 @@
 #include "driver/usb_serial_jtag.h"
 #include "input_ble.h"
 #include "native_ui.h"
+#include "display_profile.h"
 #include "lwip/sockets.h"
 
 static const char *TAG="network";
@@ -89,16 +90,23 @@ static void usb_provision_task(void *arg){
             esp_netif_t *sta=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
             if(sta)esp_netif_get_ip_info(sta,&ip);
             char reply[384];int n=snprintf(reply,sizeof reply,
-                "P4_STATUS {\"wifi_ready\":%d,\"ip\":\"" IPSTR "\",\"ble_ready\":%d,\"airplay\":\"%s\",\"decoded\":%llu,\"shown\":%llu,\"dropped\":%lu,\"decoder_error\":%d,\"source_width\":%u,\"source_height\":%u}\n",
+                "P4_STATUS {\"wifi_ready\":%d,\"ip\":\"" IPSTR "\",\"ble_ready\":%d,\"airplay\":\"%s\",\"decoded\":%llu,\"shown\":%llu,\"dropped\":%lu,\"decoder_error\":%d,\"source_width\":%u,\"source_height\":%u,\"profile\":\"%s\"}\n",
                 app_network_ready(),IP2STR(&ip.ip),input_ble_is_ready(),airplay_receiver_state_name(airplay_receiver_get_state()),
                 (unsigned long long)stats.decoded,(unsigned long long)stats.shown,(unsigned long)stats.dropped,stats.decoder_error,
-                stats.source_width,stats.source_height);
+                stats.source_width,stats.source_height,display_profile_name(display_profile_get()));
             if(n>0&&(size_t)n<sizeof reply)usb_serial_jtag_write_bytes(reply,n,pdMS_TO_TICKS(500));
         }
         if(!discard&&strcmp(line,"P4-PAIR")==0){
             input_ble_pairing_window();
             const char reply[]="P4_PAIR_OK\n";
             usb_serial_jtag_write_bytes(reply,sizeof reply-1,pdMS_TO_TICKS(500));
+        }
+        if(!discard&&strncmp(line,"P4-MODE ",8)==0){
+            const char *mode=line+8;esp_err_t err=ESP_ERR_INVALID_ARG;
+            if(strcmp(mode,"smooth")==0)err=display_profile_set(DISPLAY_SMOOTH);
+            else if(strcmp(mode,"sharp")==0)err=display_profile_set(DISPLAY_SHARP);
+            const char *reply=err==ESP_OK?"P4_MODE_OK\n":"P4_MODE_ERROR\n";
+            usb_serial_jtag_write_bytes(reply,strlen(reply),pdMS_TO_TICKS(500));
         }
         if(!discard&&strncmp(line,"P4-WIFI ",8)==0){
             char new_ssid[33]={0},new_password[64]={0},new_name[41]={0};

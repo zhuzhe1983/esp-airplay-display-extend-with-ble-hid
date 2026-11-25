@@ -17,4 +17,5 @@ static inline BaseType_t xQueueReceive(QueueHandle_t q,void *item,TickType_t tic
     memcpy(item,q->items+q->head*q->size,q->size);q->head=(q->head+1)%q->capacity;q->count--;return pdTRUE;
 }
 static inline UBaseType_t uxQueueSpacesAvailable(QueueHandle_t q){return (UBaseType_t)(q->capacity-q->count);}
+static inline UBaseType_t uxQueueMessagesWaiting(QueueHandle_t q){return (UBaseType_t)q->count;}
 static inline void vQueueDelete(QueueHandle_t q){free(q->items);free(q);}

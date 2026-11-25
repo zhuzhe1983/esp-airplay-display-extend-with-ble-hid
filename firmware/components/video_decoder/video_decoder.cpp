@@ -9,6 +9,8 @@
 
 #ifdef ESP_PLATFORM
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
+#include "esp_log.h"
 #endif
 
 namespace {
@@ -324,7 +326,13 @@ struct video_decoder {
     size_t pixel_bytes = 0;
     ParameterSets sets{};
     uint64_t frames = 0;
+    uint64_t decoded_outputs = 0;
     bool flushed = false;
+#ifdef ESP_PLATFORM
+    int64_t last_codec_us=0;
+    int last_nri=-1;
+    size_t last_au_bytes=0;
+#endif
 };
 
 namespace {
@@ -363,6 +371,9 @@ int initialize_codec(video_decoder_t *d) {
 
 int emit_frame(video_decoder_t *d, uint8_t *planes[3], const SBufferInfo &buffer) {
     if (!buffer.iBufferStatus) return VIDEO_DECODER_OK;
+#ifdef ESP_PLATFORM
+    const int64_t convert_started=esp_timer_get_time();
+#endif
     const auto &image = buffer.UsrData.sSystemBuffer;
     if (!planes[0] || !planes[1] || !planes[2] ||
         image.iWidth <= 0 || image.iHeight <= 0 ||
@@ -371,6 +382,8 @@ int emit_frame(video_decoder_t *d, uint8_t *planes[3], const SBufferInfo &buffer
         uint64_t(image.iWidth) * image.iHeight > kMaxVisiblePixels ||
         image.iStride[0] < image.iWidth || image.iStride[1] < (image.iWidth + 1) / 2)
         return VIDEO_DECODER_ERR_CODEC;
+    ++d->decoded_outputs;
+    if(d->config.should_present&&!d->config.should_present(d->config.user))return VIDEO_DECODER_OK;
     const auto &sps = d->sets.sps[d->sets.active_sps];
     const uint32_t sw = image.iWidth, sh = image.iHeight;
     const uint32_t pw = d->config.panel_width, ph = d->config.panel_height;
@@ -387,16 +400,29 @@ int emit_frame(video_decoder_t *d, uint8_t *planes[3], const SBufferInfo &buffer
     const uint32_t left = (pw - dw) / 2, top = (ph - dh) / 2;
     std::memset(d->pixels, 0, d->pixel_bytes);
     for (uint32_t x = 0; x < dw; ++x) d->sample_x[x] = uint16_t(x * sw / dw);
+    uint32_t previous_sy=UINT32_MAX;
+    const uint16_t *previous_row=nullptr;
     for (uint32_t y = 0; y < dh; ++y) {
         const uint32_t sy = y * sh / dh;
+        uint16_t *dst = d->pixels + size_t(y + top) * pw + left;
+        if(sy==previous_sy){
+            std::memcpy(dst,previous_row,size_t(dw)*sizeof(uint16_t));
+            continue;
+        }
         const uint8_t *yp = planes[0] + size_t(sy) * image.iStride[0];
         const uint8_t *up = planes[1] + size_t(sy / 2) * image.iStride[1];
         const uint8_t *vp = planes[2] + size_t(sy / 2) * image.iStride[1];
-        uint16_t *dst = d->pixels + size_t(y + top) * pw + left;
+        uint32_t previous_sx=UINT32_MAX;
+        uint16_t color=0;
         for (uint32_t x = 0; x < dw; ++x) {
             const uint32_t sx = d->sample_x[x];
-            dst[x] = yuv565(yp[sx], up[sx / 2], vp[sx / 2], sps.full_range, sps.bt709);
+            if(sx!=previous_sx){
+                color=yuv565(yp[sx], up[sx / 2], vp[sx / 2], sps.full_range, sps.bt709);
+                previous_sx=sx;
+            }
+            dst[x]=color;
         }
+        previous_sy=sy;previous_row=dst;
     }
     video_decoder_frame_t frame{};
     frame.rgb565 = d->pixels;
@@ -405,7 +431,17 @@ int emit_frame(video_decoder_t *d, uint8_t *planes[3], const SBufferInfo &buffer
     frame.view_rect = {uint16_t(left), uint16_t(top), uint16_t(dw), uint16_t(dh)};
     frame.source_width = uint16_t(sw); frame.source_height = uint16_t(sh);
     frame.frame_number = ++d->frames;
+#ifdef ESP_PLATFORM
+    const int64_t converted=esp_timer_get_time();
+#endif
     d->config.callback(d->config.user, &frame);
+#ifdef ESP_PLATFORM
+    if(d->frames<=3||d->frames%30==0)
+        ESP_LOGI("video_perf","output=%llu frame=%llu source=%ux%u ref=%d bytes=%u codec=%lldus convert=%lldus publish=%lldus",
+            (unsigned long long)d->decoded_outputs,(unsigned long long)d->frames,frame.source_width,frame.source_height,
+            d->last_nri,(unsigned)d->last_au_bytes,
+            (long long)d->last_codec_us,(long long)(converted-convert_started),(long long)(esp_timer_get_time()-converted));
+#endif
     return VIDEO_DECODER_OK;
 }
 
@@ -454,7 +490,20 @@ extern "C" int video_decoder_push(video_decoder_t *d, const uint8_t *annexb, siz
     d->sets = pending;
     uint8_t *planes[3] = {};
     SBufferInfo info{};
+#ifdef ESP_PLATFORM
+    d->last_nri=-1;d->last_au_bytes=length;
+    size_t at=0,prefix=0;
+    while((at=find_start(annexb,length,at,prefix))<length&&at+prefix<length){
+        uint8_t header=annexb[at+prefix];
+        if((header&31)>=1&&(header&31)<=5){d->last_nri=(header>>5)&3;break;}
+        at+=prefix+1;
+    }
+    const int64_t codec_started=esp_timer_get_time();
+#endif
     const DECODING_STATE state = d->codec->DecodeFrameNoDelay(annexb, int(length), planes, &info);
+#ifdef ESP_PLATFORM
+    d->last_codec_us=esp_timer_get_time()-codec_started;
+#endif
     const int rc = decode_result(state);
     if (rc) return rc; // Error concealment is disabled; never fabricate a frame.
     return emit_frame(d, planes, info);
@@ -486,6 +535,7 @@ extern "C" int video_decoder_reset(video_decoder_t *d) {
     destroy_codec(d);
     d->sets = ParameterSets{};
     d->frames = 0;
+    d->decoded_outputs = 0;
     d->flushed = false;
     return initialize_codec(d);
 }

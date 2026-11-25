@@ -31,6 +31,7 @@ typedef struct {
   uint8_t ed25519_seed[32]; // long-term pairing identity (keep stable across boots)
   uint16_t width, height;   // advertised display
   uint8_t max_fps;
+  uint8_t profile_id;       // 0: original receiver; 1: smooth virtual receiver
   uint16_t width_mm, height_mm; // physical size in millimeters, 0 when unknown
   // H.264 out, Annex-B. Called from the mirror task; the data is only valid during the call.
   void (*on_config)(const uint8_t *sps_pps, size_t len);

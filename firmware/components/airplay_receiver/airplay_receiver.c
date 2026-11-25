@@ -99,15 +99,16 @@ static void receiver_au(const uint8_t *data, size_t len, bool idr, uint64_t time
     s_config.frame_cb(&frame, s_config.ctx);
 }
 
-static esp_err_t load_identity(uint8_t seed[32]) {
+static esp_err_t load_identity(uint8_t seed[32], uint8_t profile_id) {
     nvs_handle_t nvs;
     esp_err_t err = nvs_open("p4_airplay", NVS_READWRITE, &nvs);
     if (err != ESP_OK) return err;
     size_t len = 32;
-    err = nvs_get_blob(nvs, "ed25519_seed", seed, &len);
+    const char *key=profile_id ? "smooth_seed" : "ed25519_seed";
+    err = nvs_get_blob(nvs, key, seed, &len);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
         esp_fill_random(seed, 32);
-        err = nvs_set_blob(nvs, "ed25519_seed", seed, 32);
+        err = nvs_set_blob(nvs, key, seed, 32);
         if (err == ESP_OK) err = nvs_commit(nvs);
     } else if (err == ESP_OK && len != 32) {
         err = ESP_ERR_INVALID_SIZE;
@@ -121,7 +122,7 @@ esp_err_t airplay_receiver_start(const airplay_receiver_config_t *config) {
     if (!config || !config->name || !config->frame_cb ||
         !config->width || !config->height || config->width > 1920 || config->height > 1920 ||
         !config->max_fps || config->max_fps > 60 ||
-        config->width_mm > 2000 || config->height_mm > 2000 ||
+        config->profile_id > 1 || config->width_mm > 2000 || config->height_mm > 2000 ||
         (!!config->width_mm != !!config->height_mm)) return ESP_ERR_INVALID_ARG;
     size_t name_len = strnlen(config->name, sizeof s_name);
     if (!name_len || name_len >= sizeof s_name) return ESP_ERR_INVALID_ARG;
@@ -134,10 +135,18 @@ esp_err_t airplay_receiver_start(const airplay_receiver_config_t *config) {
     airplay_cfg cfg = {
         .name = s_name, .width = config->width, .height = config->height, .max_fps = config->max_fps,
         .width_mm = config->width_mm, .height_mm = config->height_mm,
+        .profile_id=config->profile_id,
         .on_config = receiver_config, .on_au = receiver_au, .on_lost = receiver_lost, .log = receiver_log,
     };
     esp_err_t err = esp_efuse_mac_get_default(cfg.hwaddr);
-    if (err == ESP_OK) err = load_identity(cfg.ed25519_seed);
+    if(err==ESP_OK&&config->profile_id){
+        /* macOS caches endpoint display capabilities by AirPlay device ID.
+         * Give the smooth virtual receiver its own unicast/local identity;
+         * neither the Wi-Fi interface nor the BLE controller address changes. */
+        cfg.hwaddr[0]=(cfg.hwaddr[0]&0xfc)|0x02;
+        cfg.hwaddr[5]^=config->profile_id;
+    }
+    if (err == ESP_OK) err = load_identity(cfg.ed25519_seed,config->profile_id);
     if (err != ESP_OK) {
         ap_receiver_notify(AIRPLAY_RECEIVER_ERROR, "Cannot load persistent receiver identity; initialize NVS first");
         return err;

@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,6 +39,9 @@ typedef struct {
     size_t max_access_unit_bytes;
     video_decoder_frame_cb_t callback;
     void *user;
+    /* Optional output policy, after AVC decoding and before RGB conversion.
+     * false skips presentation only; reference pictures remain intact. */
+    bool (*should_present)(void *user);
 } video_decoder_config_t;
 
 typedef enum {

@@ -23,13 +23,17 @@ P4-WIFI ssid=<URL编码的SSID>&password=<URL编码的密码>&name=<URL编码的
 
 2026-11-25 在 P4 rev 1.0 Claw4 上验证：无效配置被拒绝；有效配置提交 NVS 后重启；设备从保存的配置连接局域网，mDNS 发现及 RTSP OPTIONS 返回 200。
 
-同一 USB 接口还有三条不重启设备的维护命令，每条独占一行：
+同一 USB 接口还有以下维护命令，每条独占一行：
 
 | 命令 | 返回 | 用途 |
 | --- | --- | --- |
 | `P4-PING` | `P4_PONG` | 确认应用已启动、命令通道可用 |
 | `P4-PAIR` | `P4_PAIR_OK` | 重开三分钟蓝牙配对窗口 |
 | `P4-STATUS` | `P4_STATUS {JSON}` | Wi-Fi/IP、BLE 就绪、AirPlay 阶段、解码/显示/丢帧计数、解码错误 |
+| `P4-MODE smooth` | `P4_MODE_OK` | 保存并切换快速同步档，重新发布 AirPlay 服务 |
+| `P4-MODE sharp` | `P4_MODE_OK` | 保存并切换清晰档，重新发布 AirPlay 服务 |
+
+切档不重启主控，但会结束旧 AirPlay 会话；在 Mac 连接带 `FastSync` 或 `Sharp` 后缀的名称。非法档位或 NVS 保存失败返回 `P4_MODE_ERROR`。状态 JSON 的 `profile` 为 `smooth` 或 `sharp`；`decoded` 只统计传到 UI 的输出，不包含主动跳过显示的解码图片。
 
 `P4_PAIR_OK` 只表示收到请求，实际广播和配对结果以日志为准。
 `airplay=streaming` 只表示收到有效压缩数据；`decoded`、`shown` 增长且屏幕有图像才算实际出图。
