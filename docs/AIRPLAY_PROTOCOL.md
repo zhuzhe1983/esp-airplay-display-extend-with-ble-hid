@@ -1,6 +1,6 @@
 # 原生 AirPlay 接收组件：实现范围和验收边界
 
-这个组件为 ESP32-P4 实现局域网内的 **legacy AirPlay 屏幕镜像接收协议**。Mac 端的目标入口是系统“屏幕镜像”菜单，不需要安装 HoppScreen 或配套发送程序。项目目前属于研发原型：本次没有连接真实 Mac 与两款 P4 实板做端到端验证，不能把成功编译、Bonjour 可发现或握手完成写成“已经投屏成功”。
+这个组件为 ESP32-P4 实现局域网内的 **legacy AirPlay 屏幕镜像接收协议**。Mac 端的目标入口是系统“屏幕镜像”菜单，不需要安装 HoppScreen 或配套发送程序。项目目前属于研发原型：Claw4 已实际完成 Mac 配对、FairPlay、SETUP 和视频 TCP 连接，但此前的 10 Hz 显示模式在 WindowServer 创建时失败；实际出图结果见 [本机安装记录](LOCAL_SETUP.md)。不能把成功编译、Bonjour 可发现或握手完成写成“已经投屏成功”。
 
 它不是 Sidecar。将 Bonjour 名称设成“iPad”不会实现 Sidecar 的身份、边栏、触控栏、Apple Pencil 或触摸回传。独立 USB/BLE HID 的实现与本组件分开，必须另测 macOS 的指针行为以及扩展屏的坐标映射。
 
@@ -17,7 +17,7 @@
 | 阶段 | 组件行为 | 不能据此得出的结论 |
 |---|---|---|
 | 服务发现 | 发布 `_airplay._tcp`、`_raop._tcp` 和与 legacy mirror 匹配的 TXT 字段 | 可见设备不代表认证、视频或扩展模式成功 |
-| 控制连接 | TCP 7000 上的有界 RTSP 解析、`/info`、`OPTIONS`、参数、反馈、`RECORD`、`TEARDOWN` | 返回 RTSP 200 不是显示成功 |
+| 控制连接 | TCP 7000 上的有界 HTTP/RTSP 解析、`/info`、`OPTIONS`、参数、反馈、`RECORD`、`TEARDOWN` | 返回 200 不是显示成功 |
 | 配对与密钥 | 真实 Ed25519/X25519 legacy pair-setup/pair-verify；FairPlay v3/PlayFair；SHA-512 派生会话密钥 | 不包含 PIN/SRP 配对、完整 AirPlay 2 或 DRM 播放 |
 | 首次 SETUP | 验证 `ekey` / `eiv`、建立会话、启动 NTP/音频 UDP 端口 | 时钟可交互不代表 Mac 将发送视频 |
 | 视频 SETUP | type 110、`streamConnectionID`、TCP 7100 listener、派生 AES-CTR 流密钥 | TCP 已连接仍可能没有 SPS/PPS 或图像 |
@@ -42,7 +42,7 @@ esp_err_t airplay_receiver_stop(void);
 airplay_receiver_state_t airplay_receiver_get_state(void);
 ```
 
-`config` 包含 `name`、`width`、`height`、`max_fps`、`frame_cb`、`state_cb`、`ctx`。组件是单实例；start/stop 由应用的同一控制任务调用，不能在回调内调用，也不能并发调用。设备名称最多 48 个 UTF-8 字节；组件会复制名称。
+`config` 包含 `name`、`width`、`height`、`max_fps`、`width_mm`、`height_mm`、`frame_cb`、`state_cb`、`ctx`。物理宽高以毫米表示，未知时同时为零；不能只填写一边。组件是单实例；start/stop 由应用的同一控制任务调用，不能在回调内调用，也不能并发调用。设备名称最多 48 个 UTF-8 字节；组件会复制名称。
 
 `frame_cb` 的 `airplay_receiver_frame_t` 提供 `data`、`len`、`pts_us`、`keyframe`。数据为 Annex B 格式：IDR 的开头已拼接最近的 SPS/PPS；`pts_us` 是 sender 的 32.32 时间戳换算后相对本会话首 AU 的微秒值。它不是已经做 NTP 偏移校准的本地墙钟。应用应以低延迟显示为目标，不把它误当作完成 A/V 同步的时钟。
 
@@ -64,7 +64,7 @@ airplay_receiver_state_t airplay_receiver_get_state(void);
 
 - 同时最多 3 个 RTSP TCP 连接、1 个镜像会话；不同发送端不能抢占已建立的会话。镜像 TCP 和音频/NTP UDP 的来源受已建立会话的 IP 约束。
 - RTSP 请求总长最多 64 KiB，头部最多 8 KiB、24 个字段；拒绝重复 Content-Length、非法十进制长度、chunked/Transfer-Encoding 和整数溢出。未完成请求有 5 秒期限，闲置且未拥有会话的控制连接有 30 秒期限。
-- 镜像载荷最多 2 MiB，未完成数据包有 5 秒期限；超限不会继续分配。codec 配置最多 4 KiB，支持 avcC 内多个 SPS/PPS，NAL length 字段必须为 4 字节。
+- 镜像载荷最多 2 MiB；未完成包按接收进度和所属控制连接活跃状态回收，超限不会继续分配。codec 配置最多 4 KiB，支持 avcC 内多个 SPS/PPS，NAL length 字段必须为 4 字节。
 - binary plist 对象数最多 4096；偏移、长度、对象表、容器项数均用不溢出的边界检查。输出 plist 最多 64 KiB。
 - 最大镜像 buffer、解密副本、恢复缓存、带 SPS/PPS 的 IDR 可能合计接近 8 MiB PSRAM；另需解码器参考帧、解码/渲染队列及 LCD framebuffer。必须基于真实流记录 PSRAM 最小剩余值，不能只按压缩平均码率估内存。
 - 建议 `CONFIG_LWIP_MAX_SOCKETS` 至少为 20，为 mDNS、应用服务和网络组件保留容量。RTSP 和镜像任务各用 12 KiB 内部 RAM stack。
@@ -73,6 +73,20 @@ airplay_receiver_state_t airplay_receiver_get_state(void);
 ## H.264 profile 与性能必须单独验证
 
 `width`、`height`、`maxFPS` 是 `/info` 里的接收端请求，发送端可能选择不同参数。本组件不会假装能用一个 TXT 位或修改 SPS profile 字节把 High/CABAC 视频变成 Baseline。
+
+Claw4 的描述为 720×720、最高 30 fps、物理尺寸约 71×71 mm；后者由厂家标注的
+[3.95 英寸方屏](https://github.com/CloudZao/MetalioClaw4#1-product-overview)对角线换算并取整。
+显示描述包含自建的 EDID 1.4（开发设备标识 PND），只列出首选原生时序；
+校验和、像素尺寸、物理尺寸及 30 Hz 时钟有主机测试。2026-11-25 的 Mac 日志已经读到
+720×720，但旧版的 10 Hz 模式不能创建 `SLVirtualDisplaySettings`，并提示零物理尺寸无效，
+因此同时修正模式上限和物理尺寸。该 Mac 随后创建了扩展屏，但仍选用 800×600
+逻辑桌面、发送 720×540 视频；720×720 原生模式被标为不支持，显式选用也回落。
+EDID 已被 Mac 识别为 present，不能因此宣称桌面已实现 720×720 的 1:1。
+
+解码队列满时最多等待两秒，让 TCP 接收窗口限流，期间释放队列锁，连接重置可取消等待。
+超过上限仍清理队列并等待 IDR，以维持内存边界与参考帧完整性。
+视频包的超时改为接收进度停滞 30 秒且最近 10 秒没有所属控制连接的有效请求；
+持续收到 Mac 的 RTSP feedback 时保留半包，避免静态桌面或限流写入触发误断连。
 
 UxPlay 的 [Mac 样例 SPS/PPS](https://github.com/FDH2/UxPlay/issues/73#issuecomment-1079728540) 包含 High profile、CABAC 与 8×8 transform，因此只接 Espressif constrained-baseline 解码器不够。该历史样例用于证明存在这种格式，不代表所有当前 macOS 版本都输出相同码流。
 

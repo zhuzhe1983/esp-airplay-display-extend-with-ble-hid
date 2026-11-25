@@ -15,3 +15,5 @@ void native_ui_ble(input_ble_state_t,const char *,void *);
 void native_ui_video(void *,const video_decoder_frame_t *);
 void native_ui_decoder_error(int error);
 void native_ui_queue_drop(uint32_t total);
+typedef struct {uint64_t decoded,shown;uint32_t dropped;int decoder_error;uint16_t source_width,source_height;} native_ui_stats_t;
+void native_ui_get_stats(native_ui_stats_t *out);

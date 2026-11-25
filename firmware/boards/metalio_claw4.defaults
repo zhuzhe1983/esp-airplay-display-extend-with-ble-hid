@@ -1,9 +1,16 @@
 # MetalioClaw4 upstream ca3aa3fa027ff7dad2adf0c2d03c4f24aa838950
 CONFIG_DISPLAY_BOARD_METALIO_CLAW4=y
+CONFIG_P4_STREAM_WIDTH=720
+CONFIG_P4_STREAM_HEIGHT=720
+# Use a standard 30 Hz timing mode for macOS virtual-display setup.
+CONFIG_P4_STREAM_FPS=30
 CONFIG_CLAW4_LCD_NV3051F=y
 CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
 CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
 CONFIG_ESP32P4_REV_MIN_0=y
+# On the installed P4 rev 1.0, hardware ECDH returns the wrong known-vector
+# result even with mbedTLS. Keep ECC in software for this early-revision board.
+CONFIG_MBEDTLS_HARDWARE_ECC=n
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_HEX=y

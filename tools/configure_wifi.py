@@ -23,6 +23,19 @@ def main():
     port.port = args.port
     try:
         port.open()
+        deadline = time.monotonic() + 35
+        received = bytearray()
+        while time.monotonic() < deadline:
+            port.write(b"\nP4-PING\n")
+            until = time.monotonic() + 1
+            while time.monotonic() < until:
+                received.extend(port.read(min(max(port.in_waiting, 1), 4096)))
+                if b"P4_PONG" in received:
+                    break
+            if b"P4_PONG" in received:
+                break
+        else:
+            parser.error("Device configuration interface is not ready.")
         port.write(("\nP4-WIFI " + payload + "\n").encode())
         port.flush()
         received = bytearray()

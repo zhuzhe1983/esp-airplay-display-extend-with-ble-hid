@@ -26,6 +26,8 @@ static SemaphoreHandle_t lock;
 static uint16_t *video,*canvas;
 static uint16_t width,height;
 static bool have_video,dirty=true,keyboard,info,was_down,blocked,reset_fired,reset_armed,touch_fault;
+static bool controls=true,recovering,edge_capture,edge_done,edge_show,edge_top,edge_tap;
+static int edge_x,edge_y;
 typedef enum { UI_ACTION_NONE=0, UI_ACTION_PAIR=1, UI_ACTION_RESET_WIFI=2 } ui_action_t;
 static char net_a[64]="Starting",net_b[64]="",air_detail[96]="Waiting for Wi-Fi",ble_detail[96]="Starting";
 static network_state_t net_state=NETWORK_STARTING;
@@ -37,8 +39,11 @@ static ui_key_t keys[80];static int key_count,pressed_key=-1;
 static uint32_t pressed_at,last_repeat,reset_started,drops;
 static uint64_t decoded_frames,presented_frames,last_presented_frame;
 static int decoder_error;
+static uint16_t source_width,source_height;
 static int toolbar_y(void){return height-58;}
 static int keyboard_y(void){return toolbar_y()-6*52-8;}
+static bool controls_shown(void){return !have_video||controls||keyboard||info;}
+static int controls_handle_y(void){return (keyboard?keyboard_y():toolbar_y())-18;}
 static void rect(int x,int y,int w,int h,uint16_t color){
     if(x<0){w+=x;x=0;}if(y<0){h+=y;y=0;}
     if(x+w>width)w=width-x;
@@ -89,6 +94,7 @@ static void layout_keyboard(void){
 }
 static void draw(void){
     if(have_video&&!info)memcpy(canvas,video,(size_t)width*height*2);else rect(0,0,width,height,BG);
+    if(!controls_shown())return;
     rect(0,0,width,52,BG);text(16,15,"P4 NATIVE DISPLAY",3,FG);
     text(width-174,18,input_ble_is_ready()?"INPUT READY":"INPUT OFF",2,input_ble_is_ready()?GREEN:AMBER);
     if(!have_video||info){
@@ -116,8 +122,13 @@ static void draw(void){
         for(int i=0;i<key_count;i++)button(keys[i].x,keys[i].y,keys[i].w,keys[i].h,keys[i].label,i==pressed_key||(keys[i].special&&(modifiers&keys[i].modifier)));
     }
     const char *labels[]={keyboard?"HIDE KEYS":"KEYBOARD","PAIR","INFO",input.absolute?"ABS TEST":"TOUCHPAD"};
+    if(have_video)rect(width/2-40,controls_handle_y()+7,80,4,MUTED);
     rect(0,toolbar_y(),width,58,BG);
     for(int i=0;i<4;i++)button(4+i*(width-8)/4,toolbar_y()+5,(width-8)/4-4,48,labels[i],(i==0&&keyboard)||(i==2&&info));
+    if(have_video&&recovering&&!info){
+        rect(0,52,width,36,BG);
+        text(16,62,"WAITING FOR VIDEO - LAST FRAME",2,AMBER);
+    }
 }
 static void release_key(void){
     if(pressed_key<0)return;
@@ -128,9 +139,9 @@ static bool reset_hit(int x,int y){
     return x>=width-236&&x<width-16&&y>=toolbar_y()-65&&y<toolbar_y()-15;
 }
 static bool video_hit(int x,int y){
-    return have_video&&!info&&x>=input.map.x&&x<input.map.x+input.map.w&&
-        y>=input.map.y&&y<input.map.y+input.map.h&&y>=52&&y<toolbar_y()&&
-        (!keyboard||y<keyboard_y());
+    if(!have_video||recovering||info||x<input.map.x||x>=input.map.x+input.map.w||
+       y<input.map.y||y>=input.map.y+input.map.h)return false;
+    return !controls_shown()||(y>=52&&y<toolbar_y()&&(!keyboard||y<keyboard_y()));
 }
 /* Actions that may synchronously publish state (or reboot) leave the UI mutex
  * before they execute. In particular pairing -> native_ui_ble is reentrant. */
@@ -139,12 +150,25 @@ static ui_action_t touch(const board_touch_point_t *points,int count,uint32_t no
     bool down=count>0;
     int x=down?points[0].x:0,y=down?points[0].y:0;
     if(!down){
+        if(edge_capture&&edge_tap&&!edge_done){
+            input_point_t point={(uint16_t)edge_x,(uint16_t)edge_y};
+            input_engine_update(&input,&point,1,pressed_at);
+        }
+        edge_capture=edge_done=edge_tap=false;
         release_key();input_engine_update(&input,NULL,0,now);was_down=false;blocked=false;
         if(reset_armed)dirty=true;
         reset_armed=false;reset_fired=false;return UI_ACTION_NONE;
     }
     if(!was_down){
         pressed_at=last_repeat=now;was_down=true;
+        bool shown=controls_shown();
+        bool top=shown?y<52:y<24;
+        bool bottom=shown?(x>=width/2-90&&x<width/2+90&&y>=controls_handle_y()&&y<controls_handle_y()+23):y>=height-24;
+        if(have_video&&count==1&&(top||bottom)){
+            edge_capture=true;edge_done=false;edge_show=!shown;edge_top=top;
+            edge_tap=!shown&&video_hit(x,y);edge_x=x;edge_y=y;
+            blocked=true;input_engine_cancel(&input);release_key();return UI_ACTION_NONE;
+        }
         if(y>=toolbar_y()){
             blocked=true;input_engine_cancel(&input);release_key();
             if(count!=1)return UI_ACTION_NONE;
@@ -175,6 +199,21 @@ static ui_action_t touch(const board_touch_point_t *points,int count,uint32_t no
             return UI_ACTION_NONE;
         }
         if(!video_hit(x,y)){blocked=true;return UI_ACTION_NONE;}
+    }
+    if(edge_capture){
+        if(count!=1){edge_tap=false;edge_done=true;return UI_ACTION_NONE;}
+        int dx=x-edge_x,dy=y-edge_y;
+        bool inward=edge_top?dy>=40:dy<=-40;
+        bool outward=edge_top?dy<=-32:dy>=32;
+        if(!edge_done&&abs(dy)>abs(dx)*2&&(edge_show?inward:outward)){
+            controls=edge_show;info=false;
+            if(!controls){keyboard=false;modifiers=0;release_key();}
+            edge_done=true;edge_tap=false;dirty=true;
+        }else if(!edge_done&&edge_tap&&((abs(dx)>32&&abs(dx)>abs(dy)*2)||now-pressed_at>=350)){
+            input_point_t start={(uint16_t)edge_x,(uint16_t)edge_y};
+            edge_capture=false;blocked=false;input_engine_update(&input,&start,1,pressed_at);
+        }
+        if(edge_capture)return UI_ACTION_NONE;
     }
     if(reset_armed){
         if(count!=1||!info||!reset_hit(x,y)){reset_armed=false;dirty=true;}
@@ -212,7 +251,7 @@ static void ui_task(void *p){
         xSemaphoreTake(lock,portMAX_DELAY);
         if(count<0||count>2){
             if(!touch_fault){release_key();input_engine_cancel(&input);if(reset_armed)dirty=true;}
-            touch_fault=true;was_down=false;blocked=true;reset_armed=false;reset_fired=false;
+            touch_fault=true;was_down=false;blocked=true;reset_armed=false;reset_fired=false;edge_capture=false;edge_tap=false;
         }else if(touch_fault){
             /* An I2C failure must not become a fresh click while a finger is
              * still down; resume only after an observed all-fingers release. */
@@ -254,7 +293,11 @@ void native_ui_network(network_state_t s,const char *a,const char *b,void *ctx){
 }
 void native_ui_airplay(airplay_receiver_state_t s,const char *detail,void *ctx){
     (void)ctx;if(!lock)return;xSemaphoreTake(lock,portMAX_DELAY);air_state=s;strlcpy(air_detail,detail?detail:"",sizeof air_detail);
-    if(s!=AIRPLAY_RECEIVER_STREAMING){have_video=false;release_key();modifiers=0;input_engine_cancel(&input);blocked=was_down;}
+    if(s!=AIRPLAY_RECEIVER_STREAMING){
+        recovering=have_video&&(s==AIRPLAY_RECEIVER_WAITING_VIDEO||s==AIRPLAY_RECEIVER_NO_VIDEO);
+        if(!recovering)have_video=false;
+        controls=true;keyboard=false;release_key();modifiers=0;input_engine_cancel(&input);blocked=was_down;edge_capture=false;edge_tap=false;
+    }
     dirty=true;xSemaphoreGive(lock);
 }
 void native_ui_ble(input_ble_state_t s,const char *detail,void *ctx){
@@ -265,17 +308,27 @@ void native_ui_video(void *ctx,const video_decoder_frame_t *f){
     (void)ctx;if(!lock||!f||!f->rgb565||f->width!=width||f->height!=height||f->stride_bytes<(size_t)width*2||
         !f->view_rect.width||!f->view_rect.height||f->view_rect.x+f->view_rect.width>width||f->view_rect.y+f->view_rect.height>height)return;
     xSemaphoreTake(lock,portMAX_DELAY);
+    if(!have_video||recovering){controls=false;keyboard=false;info=false;edge_capture=false;edge_tap=false;}
+    recovering=false;
     for(int y=0;y<height;y++)memcpy(video+(size_t)y*width,(const uint8_t *)f->rgb565+y*f->stride_bytes,width*2);
     input.map=(input_mapping_t){.x=f->view_rect.x,.y=f->view_rect.y,.w=f->view_rect.width,.h=f->view_rect.height,.xmax=32767,.ymax=32767};
+    source_width=f->source_width;source_height=f->source_height;
     have_video=true;decoded_frames++;decoder_error=0;dirty=true;xSemaphoreGive(lock);
 }
 void native_ui_decoder_error(int error){
     if(!lock)return;
-    xSemaphoreTake(lock,portMAX_DELAY);decoder_error=error;have_video=false;release_key();modifiers=0;
+    xSemaphoreTake(lock,portMAX_DELAY);decoder_error=error;have_video=false;controls=true;edge_capture=false;edge_tap=false;release_key();modifiers=0;
     input_engine_cancel(&input);blocked=was_down;dirty=true;xSemaphoreGive(lock);
 }
 void native_ui_queue_drop(uint32_t total){
     if(!lock)return;
     /* Receiver callbacks can publish snapshots out of order after unlocking. */
     xSemaphoreTake(lock,portMAX_DELAY);if(total>drops){drops=total;dirty=true;}xSemaphoreGive(lock);
+}
+void native_ui_get_stats(native_ui_stats_t *out){
+    if(!out)return;
+    memset(out,0,sizeof *out);if(!lock)return;
+    xSemaphoreTake(lock,portMAX_DELAY);
+    *out=(native_ui_stats_t){decoded_frames,presented_frames,drops,decoder_error,source_width,source_height};
+    xSemaphoreGive(lock);
 }

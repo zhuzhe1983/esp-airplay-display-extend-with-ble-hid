@@ -36,6 +36,7 @@ extern uint8_t ap_sk[64];  // libsodium secret key (seed + pk)
 void ap_log(const char *fmt, ...);
 void ap_receiver_notify(airplay_receiver_state_t state, const char *detail);
 void ap_receiver_new_session(void);
+bool ap_control_recent(uint32_t within_ms);
 
 // ---- pairing.c (legacy pair-setup / pair-verify) ----
 enum { PAIR_INITIAL, PAIR_SETUP, PAIR_HANDSHAKE, PAIR_FINISHED };

@@ -98,6 +98,18 @@ static void taps_and_scroll(void) {
     for (size_t i = 0; i < captured_count; ++i) assert(captured[i].data[0] == 0);
 }
 
+static void jitter_and_slow_tap(void) {
+    input_engine_t e=engine();input_point_t p={200,200};
+    input_engine_update(&e,&p,1,0);
+    p=(input_point_t){208,207};input_engine_update(&e,&p,1,100);
+    p=(input_point_t){198,204};input_engine_update(&e,&p,1,300);
+    input_engine_update(&e,NULL,0,420);
+    assert(captured[captured_count-2].data[0]==1&&captured[captured_count-1].data[0]==0);
+    e=engine();input_engine_update(&e,&p,1,0);p.x+=20;
+    input_engine_update(&e,&p,1,100);input_engine_update(&e,NULL,0,160);
+    for(size_t i=0;i<captured_count;i++)assert(captured[i].data[0]==0);
+}
+
 static void dragging_and_large_motion(void) {
     input_engine_t e = engine();
     input_point_t p = {100, 100};
@@ -228,6 +240,7 @@ static void queue_overflow_and_release(void) {
 int main(void) {
     descriptor();
     taps_and_scroll();
+    jitter_and_slow_tap();
     dragging_and_large_motion();
     absolute_mapping();
     keyboard_mapping();

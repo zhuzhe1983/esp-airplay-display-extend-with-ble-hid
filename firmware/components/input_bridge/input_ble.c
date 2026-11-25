@@ -39,9 +39,13 @@ static portMUX_TYPE report_lock=portMUX_INITIALIZER_UNLOCKED;
 static input_tx_queue_t reports;
 static portMUX_TYPE queue_lock=portMUX_INITIALIZER_UNLOCKED;
 static TaskHandle_t sender_handle, host_handle;
+static struct ble_npl_event advertise_event;
 static void advertise(void);
 static int gap_event(struct ble_gap_event *event,void *arg);
 void ble_store_config_init(void);
+#ifdef P4_BLE_CRYPTO_PROBE
+void ble_crypto_probe(void);
+#endif
 
 static uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 static int32_t pairing_remaining_ms(void) {
@@ -65,6 +69,7 @@ static bool secure_reports_ready(void) {
 }
 
 static void status(input_ble_state_t s,const char *message){
+    ESP_LOGI(TAG,"state %d: %s",s,message);
     if(state_cb)state_cb(s,message,state_ctx);
 }
 static int append(struct ble_gatt_access_ctxt *c,const void *p,size_t n){
@@ -125,6 +130,7 @@ static int gap_event(struct ble_gap_event *e,void *arg){
     (void)arg;
     switch(e->type){
     case BLE_GAP_EVENT_CONNECT:
+        ESP_LOGI(TAG,"connect status=%d handle=%u",e->connect.status,e->connect.conn_handle);
         if(e->connect.status){advertise();break;}
         atomic_store(&connection,e->connect.conn_handle);atomic_store(&encrypted,false);
         atomic_store(&subscriptions,0);atomic_store(&suspended,false);request_release();
@@ -139,6 +145,7 @@ static int gap_event(struct ble_gap_event *e,void *arg){
         }
         break;
     case BLE_GAP_EVENT_DISCONNECT:
+        ESP_LOGI(TAG,"disconnect reason=%d",e->disconnect.reason);
         atomic_store(&connection,BLE_HS_CONN_HANDLE_NONE);atomic_store(&encrypted,false);
         atomic_store(&subscriptions,0);atomic_store(&suspended,false);request_release();
         portENTER_CRITICAL(&report_lock);
@@ -149,6 +156,7 @@ static int gap_event(struct ble_gap_event *e,void *arg){
     case BLE_GAP_EVENT_ENC_CHANGE:{
         struct ble_gap_conn_desc d;
         bool secure=e->enc_change.status==0&&ble_gap_conn_find(e->enc_change.conn_handle,&d)==0&&d.sec_state.encrypted;
+        ESP_LOGI(TAG,"encryption status=%d encrypted=%d",e->enc_change.status,secure);
         atomic_store(&encrypted,secure);request_release();publish_ready();break;
     }
     case BLE_GAP_EVENT_SUBSCRIBE:
@@ -156,6 +164,7 @@ static int gap_event(struct ble_gap_event *e,void *arg){
             if(e->subscribe.cur_notify)atomic_fetch_or(&subscriptions,1U<<i);
             else atomic_fetch_and(&subscriptions,~(1U<<i));
         }
+        ESP_LOGI(TAG,"subscribe handle=%u notify=%d mask=0x%x",e->subscribe.attr_handle,e->subscribe.cur_notify,(unsigned)atomic_load(&subscriptions));
         request_release();publish_ready();break;
     case BLE_GAP_EVENT_ADV_COMPLETE:
         /* New pairing is allowed only in the three-minute physical window. */
@@ -190,13 +199,21 @@ static void advertise(void){
     if(rc){ESP_LOGE(TAG,"advertise: %d",rc);status(INPUT_BLE_ERROR,"Bluetooth advertising failed");}
     else status(INPUT_BLE_PAIRING,"Select device in Mac Bluetooth settings");
 }
+static void advertise_from_host(struct ble_npl_event *event){
+    (void)event;advertise();
+}
 void input_ble_pairing_window(void){
-    atomic_store(&pairing_until_ms,now_ms()+180000u);advertise();
+    atomic_store(&pairing_until_ms,now_ms()+180000u);
+    /* UI/USB tasks must not race on_sync's multi-step advertising setup. */
+    if(atomic_load(&synced))ble_npl_eventq_put(nimble_port_get_dflt_eventq(),&advertise_event);
 }
 static void on_sync(void){
     int rc=ble_hs_util_ensure_addr(0);
     if(!rc)rc=ble_hs_id_infer_auto(0,&own_addr_type);
     if(rc){status(INPUT_BLE_ERROR,"No Bluetooth address from coprocessor");return;}
+#ifdef P4_BLE_CRYPTO_PROBE
+    ble_crypto_probe();
+#endif
     atomic_store(&synced,true);advertise();
 }
 static void on_reset(int reason){
@@ -323,6 +340,7 @@ esp_err_t input_ble_start(const char *name, input_ble_state_cb callback, void *c
     err = nimble_port_init();
     if (err != ESP_OK) goto fail;
     host_initialized = true;
+    ble_npl_event_init(&advertise_event,advertise_from_host,NULL);
     ble_hs_cfg.reset_cb = on_reset;
     ble_hs_cfg.sync_cb = on_sync;
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;

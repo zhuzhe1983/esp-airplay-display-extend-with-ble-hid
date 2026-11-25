@@ -13,6 +13,7 @@
 #include "../bplist/bplist.h"
 #include "ap_internal.h"
 #include "audio.h"
+#include "display_edid.h"
 
 ap_conn *ap_mirror_owner;
 
@@ -113,8 +114,13 @@ static void handle_info(ap_conn *c, const ap_req *req, ap_resp *res) {
       bp_w_set(&w, root, "displays", displays);
       bp_w_append(&w, displays, d);
       bp_w_set(&w, d, "uuid", bp_w_string(&w, "e0ff8a27-6738-3d56-8a16-cc53aacee925"));
-      bp_w_set(&w, d, "widthPhysical", bp_w_uint(&w, 0));
-      bp_w_set(&w, d, "heightPhysical", bp_w_uint(&w, 0));
+      bp_w_set(&w, d, "widthPhysical", bp_w_uint(&w, ap_cfg.width_mm));
+      bp_w_set(&w, d, "heightPhysical", bp_w_uint(&w, ap_cfg.height_mm));
+      if(ap_cfg.width_mm&&ap_cfg.height_mm){
+        uint8_t edid[128];
+        ap_display_edid(edid,ap_cfg.width,ap_cfg.height,ap_cfg.width_mm,ap_cfg.height_mm,ap_cfg.max_fps);
+        bp_w_set(&w,d,"edid",bp_w_data(&w,edid,sizeof edid));
+      }
       bp_w_set(&w, d, "width", bp_w_uint(&w, ap_cfg.width));
       bp_w_set(&w, d, "height", bp_w_uint(&w, ap_cfg.height));
       bp_w_set(&w, d, "widthPixels", bp_w_uint(&w, ap_cfg.width));
@@ -373,7 +379,8 @@ static handler_t find(const char *method, const char *url) {
 
 void ap_handle(ap_conn *c, const ap_req *req, ap_resp *res) {
   const char *cseq = ap_header(req, "CSeq");
-  handler_t fn = strcmp(req->proto, "RTSP/1.0") ? NULL : find(req->method, req->url);
+  /* Discovery and legacy pairing also arrive over HTTP on the same control port. */
+  handler_t fn = find(req->method, req->url);
   if (cseq && strcmp(req->method, "RECORD")) ap_resp_header(res, "Audio-Jack-Status", "connected; type=digital");
   if (fn) {
     fn(c, req, res);
@@ -387,4 +394,5 @@ void ap_handle(ap_conn *c, const ap_req *req, ap_resp *res) {
     snprintf(n, sizeof n, "%u", (unsigned)strtoul(cseq, NULL, 10));
     ap_resp_header(res, "CSeq", n);
   }
+  ap_log("control: %.24s %.64s %.8s -> %d, body %u",req->method,req->url,req->proto,res->code,(unsigned)req->body_len);
 }

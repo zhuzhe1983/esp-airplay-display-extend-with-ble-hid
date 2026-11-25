@@ -6,6 +6,7 @@
 #include "sdkconfig.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -19,6 +20,7 @@
 #include "native_ui.h"
 
 #define MAX_ACCESS_UNIT_BYTES (1024U * 1024U)
+#define INGRESS_WAIT_US 2000000
 static const char *TAG = "native_display";
 typedef struct { uint8_t *data; size_t len; unsigned epoch; } access_unit_t;
 static QueueHandle_t frame_queue;
@@ -80,6 +82,23 @@ static void received_frame(const airplay_receiver_frame_t *frame, void *ctx) {
         flush_locked();
         count_drop_locked();
         goto done;
+    }
+    const unsigned arrival_epoch = atomic_load(&epoch);
+    const int64_t wait_started = esp_timer_get_time();
+    while (queued_bytes + inflight_bytes + frame->len > CONFIG_P4_FRAME_QUEUE_BYTES ||
+           uxQueueSpacesAvailable(frame_queue) == 0) {
+        /* The source uses TCP. Preserve predictive frames by letting its receive
+         * window close while the decoder catches up, rather than discarding a
+         * reference chain and waiting indefinitely for another IDR. No mutex is
+         * held while waiting, and a reset cancels this old session's pending AU. */
+        if (esp_timer_get_time() - wait_started >= INGRESS_WAIT_US) break;
+        xSemaphoreGive(pipeline_lock);
+        vTaskDelay(pdMS_TO_TICKS(5));
+        xSemaphoreTake(pipeline_lock, portMAX_DELAY);
+        if (arrival_epoch != atomic_load(&epoch)) {
+            count_drop_locked();
+            goto done;
+        }
     }
     if (queued_bytes + inflight_bytes + frame->len > CONFIG_P4_FRAME_QUEUE_BYTES ||
         uxQueueSpacesAvailable(frame_queue) == 0) {
@@ -275,6 +294,7 @@ void app_main(void) {
             airplay_receiver_config_t config = {
                 .name = app_network_device_name(), .width = CONFIG_P4_STREAM_WIDTH,
                 .height = CONFIG_P4_STREAM_HEIGHT, .max_fps = CONFIG_P4_STREAM_FPS,
+                .width_mm = CONFIG_P4_DISPLAY_WIDTH_MM, .height_mm = CONFIG_P4_DISPLAY_HEIGHT_MM,
                 .frame_cb = received_frame, .state_cb = receiver_state
             };
             err = airplay_receiver_start(&config);

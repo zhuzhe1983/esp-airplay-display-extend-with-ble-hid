@@ -10,7 +10,7 @@ sh tests/runtime/run.sh --render /tmp/p4-native-ui
 ```
 
 This also runs the default tests, then writes binary PPM files for each board's
-home, keyboard, and info pages, plus the vertically longest setup/error info
+home, fullscreen, controls, waiting, keyboard, and info pages, plus the vertically longest setup/error info
 case. MetalioClaw4 uses 720×720; M5Stack Tab5 uses 720×1280. The keyboard example
 uses an explicitly labelled diagnostic background. These images are **host
 renders of firmware UI**, not physical device photographs or working Mac video.
@@ -28,6 +28,14 @@ Covered regressions:
 - Wi-Fi reset executes outside the mutex after a continuous two-second hold;
   leaving its button cancels that hold.
 - Letterbox pixels and UI overlays do not become video pointer gestures.
+- A hidden overlay preserves every pixel of a 720×720 frame; top/bottom edge
+  swipes reveal and hide controls without sending extra mouse clicks.
+- Central drags, edge taps and horizontal edge drags still reach the HID engine;
+  hiding controls releases keyboard modifiers.
+- A temporary video pause preserves the last frame and blocks stale-image clicks;
+  a new decoded frame resumes fullscreen presentation.
+- TCP pressure releases the pipeline lock while waiting; a disconnect cancels a
+  waiting old-session frame, and a stalled decoder still has a bounded timeout.
 - The compressed-memory budget includes the in-flight decoder AU.
 - Overflow and lost/config-changed video require a fresh IDR.
 - An old epoch cannot display a frame or erase a newer epoch's queue.

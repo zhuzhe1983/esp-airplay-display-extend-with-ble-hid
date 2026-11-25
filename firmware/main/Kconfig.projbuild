@@ -11,6 +11,16 @@ menu "P4 Native Display"
         int "AirPlay requested maximum FPS"
         range 1 30
         default 10
+    config P4_DISPLAY_WIDTH_MM
+        int "AirPlay display physical width in millimeters (0 = unknown)"
+        range 0 2000
+        default 71 if DISPLAY_BOARD_METALIO_CLAW4
+        default 0
+    config P4_DISPLAY_HEIGHT_MM
+        int "AirPlay display physical height in millimeters (0 = unknown)"
+        range 0 2000
+        default 71 if DISPLAY_BOARD_METALIO_CLAW4
+        default 0
     config P4_FRAME_QUEUE_BYTES
         int "Compressed frame queue memory budget"
         range 1048576 8388608

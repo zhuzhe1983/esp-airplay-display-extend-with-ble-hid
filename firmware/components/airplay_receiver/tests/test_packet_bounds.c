@@ -3,6 +3,7 @@
  */
 #include "h264_packet.h"
 #include "bplist.h"
+#include "display_edid.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -92,7 +93,23 @@ static void malformed_inputs(void) {
     }
 }
 
+static void display_description(void) {
+    uint8_t e[128];ap_display_edid(e,720,720,71,71,30);
+    unsigned sum=0;for(unsigned i=0;i<128;i++)sum+=e[i];
+    assert((sum&255)==0&&e[18]==1&&e[19]==4&&e[126]==0);
+    const uint8_t *d=e+54;
+    unsigned w=d[2]+((d[4]&0xf0)<<4),h=d[5]+((d[7]&0xf0)<<4);
+    unsigned hb=d[3]+((d[4]&15)<<8),vb=d[6]+((d[7]&15)<<8);
+    unsigned clock=(d[0]+(d[1]<<8))*10000;
+    assert(w==720&&h==720&&clock==(w+hb)*(h+vb)*30);
+    assert(d[12]+((d[14]&0xf0)<<4)==71&&d[13]+((d[14]&15)<<8)==71);
+    assert((e[24]&2)&&e[75]==0xfc&&e[93]==0xfd);
+    for(unsigned i=35;i<38;i++)assert(e[i]==0);
+    for(unsigned i=38;i<54;i++)assert(e[i]==1);
+}
+
 int main(void) {
+    display_description();
     h264_lengths();
     plist_roundtrip();
     malformed_inputs();

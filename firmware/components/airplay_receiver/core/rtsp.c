@@ -34,6 +34,12 @@ airplay_cfg ap_cfg;
 static ap_conn conns[MAX_CONNS];
 static atomic_bool server_run, server_done = true;
 static int listen_fd = -1;
+static atomic_uint_fast32_t owner_activity_ms;
+
+bool ap_control_recent(uint32_t within_ms) {
+  uint32_t last=atomic_load(&owner_activity_ms);
+  return last>0&&(uint32_t)((uint32_t)(esp_timer_get_time()/1000)-last)<within_ms;
+}
 
 void ap_log(const char *fmt, ...) {
   if (!ap_cfg.log) return;
@@ -186,6 +192,7 @@ static bool process(ap_conn *c) {
     req.body_len = body_len;
     c->last_request_us = esp_timer_get_time();
     ap_handle(c, &req, &res);
+    if(c==ap_mirror_owner)atomic_store(&owner_activity_ms,(uint32_t)(esp_timer_get_time()/1000));
     if (!respond(c, &req, &res)) return false;
     size_t consumed = head_len + body_len;
     memmove(c->buf, c->buf + consumed, c->len - consumed);

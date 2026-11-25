@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define TAP_SLOP 12
+#define HOLD_MS 450
+
 /* Four independent report-mode collections. No Apple vendor identity. */
 const uint8_t input_report_descriptor[]={
   0x05,1,0x09,6,0xA1,1,0x85,1,
@@ -144,7 +147,7 @@ void input_engine_update(input_engine_t *engine, const input_point_t *points, si
             if (engine->absolute) {
                 release_absolute(engine);
             } else {
-                if (!engine->suppressed && !engine->moved && !engine->drag && now - engine->started_ms < 350)
+                if (!engine->suppressed && !engine->moved && !engine->drag && now - engine->started_ms <= HOLD_MS)
                     (void)mouse(engine, engine->multitouch ? 2 : 1, 0, 0, 0);
                 (void)mouse(engine, 0, 0, 0, 0);
             }
@@ -196,11 +199,11 @@ void input_engine_update(input_engine_t *engine, const input_point_t *points, si
         return;
     }
     int dx = x - engine->last_x, dy = y - engine->last_y;
-    if (count == 1 && !engine->multitouch && !engine->moved && !engine->drag && now - engine->started_ms >= 450) {
+    if (count == 1 && !engine->multitouch && !engine->moved && !engine->drag && now - engine->started_ms >= HOLD_MS) {
         engine->drag = true;
         (void)mouse(engine, 1, 0, 0, 0);
     }
-    if (abs(x - engine->start_x) + abs(y - engine->start_y) > 6) engine->moved = true;
+    if (abs(x - engine->start_x) > TAP_SLOP || abs(y - engine->start_y) > TAP_SLOP) engine->moved = true;
     if (count == 2) {
         engine->multitouch = true;
         engine->scroll_remainder -= dy;

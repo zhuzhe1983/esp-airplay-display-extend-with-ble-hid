@@ -344,8 +344,12 @@ static void mirror_task(void *arg) {
   int64_t next_ntp = 0, packet_started_us = 0;
   while (m.run) {
     if (m.lfd >= 0 && !m.expect_video_us) m.expect_video_us = esp_timer_get_time();
-    if (m.sfd >= 0 && packet_started_us && esp_timer_get_time() - packet_started_us > 5000000) {
-      ap_log("mirror: incomplete packet timed out");
+    if (m.sfd >= 0 && packet_started_us && esp_timer_get_time() - packet_started_us > 30000000 &&
+        !ap_control_recent(10000)) {
+      /* A slow consumer closes the TCP window. Do not tear down a live Mac's
+       * partial write while its RTSP feedback proves the session is healthy. */
+      ap_log("mirror: stalled %s packet (%u/%u bytes), control peer inactive",
+             in_payload?"payload":"header",(unsigned)got,(unsigned)need);
       close_fd(&m.sfd);
       packet_started_us = 0;
       if (ap_cfg.on_lost) ap_cfg.on_lost();
@@ -416,7 +420,7 @@ static void mirror_task(void *arg) {
       if (ap_cfg.on_lost) ap_cfg.on_lost();
       continue;
     }
-    if (!packet_started_us) packet_started_us = esp_timer_get_time();
+    packet_started_us = esp_timer_get_time();
     got += k;
     if (got < need) continue;
     if (!in_payload) {

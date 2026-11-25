@@ -120,7 +120,9 @@ esp_err_t airplay_receiver_start(const airplay_receiver_config_t *config) {
     if (s_started) return ESP_ERR_INVALID_STATE;
     if (!config || !config->name || !config->frame_cb ||
         !config->width || !config->height || config->width > 1920 || config->height > 1920 ||
-        !config->max_fps || config->max_fps > 60) return ESP_ERR_INVALID_ARG;
+        !config->max_fps || config->max_fps > 60 ||
+        config->width_mm > 2000 || config->height_mm > 2000 ||
+        (!!config->width_mm != !!config->height_mm)) return ESP_ERR_INVALID_ARG;
     size_t name_len = strnlen(config->name, sizeof s_name);
     if (!name_len || name_len >= sizeof s_name) return ESP_ERR_INVALID_ARG;
     for (size_t i = 0; i < name_len; ++i)
@@ -131,6 +133,7 @@ esp_err_t airplay_receiver_start(const airplay_receiver_config_t *config) {
     ap_receiver_new_session();
     airplay_cfg cfg = {
         .name = s_name, .width = config->width, .height = config->height, .max_fps = config->max_fps,
+        .width_mm = config->width_mm, .height_mm = config->height_mm,
         .on_config = receiver_config, .on_au = receiver_au, .on_lost = receiver_lost, .log = receiver_log,
     };
     esp_err_t err = esp_efuse_mac_get_default(cfg.hwaddr);

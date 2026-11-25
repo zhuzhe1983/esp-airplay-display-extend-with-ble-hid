@@ -19,10 +19,12 @@ static size_t test_strlcpy(char *dst,const char *src,size_t n){
 
 int stub_alloc_fail,stub_exit_on_idle,stub_exit_after_delay,stub_notifications;
 int64_t stub_time_us;
+void (*stub_delay_hook)(void);
 jmp_buf stub_task_exit;
 static int pairing_calls,wifi_reset_calls,reset_calls,push_calls,reset_result,push_result;
 static int panel_result,panel_calls;
 static bool ble_ready=true;
+static unsigned mouse_presses;
 static const board_info_t test_board={720,1280,"Host test"};
 
 esp_err_t board_init(void){return ESP_OK;}
@@ -33,7 +35,7 @@ esp_err_t board_present_rgb565(const uint16_t *p,uint16_t w,uint16_t h,size_t st
 }
 esp_err_t board_set_backlight(uint8_t value){(void)value;return ESP_OK;}
 bool input_ble_send(uint8_t id,const uint8_t *data,size_t len,void *ctx){
-    (void)id;(void)data;(void)len;(void)ctx;return ble_ready;
+    (void)ctx;if(id==INPUT_MOUSE&&len==4&&(data[0]&3))mouse_presses++;return ble_ready;
 }
 bool input_ble_is_ready(void){return ble_ready;}
 uint8_t input_ble_keyboard_leds(void){return 0;}
@@ -107,6 +109,46 @@ static void ui_regressions(void){
     puts("UI: idle stays clean; synchronous pairing callback is unlocked; continuous reset hold; black bars ignored");
 }
 
+static void fullscreen_regressions(void){
+    uint16_t saved_height=height;height=720;layout_keyboard();
+    native_ui_airplay(AIRPLAY_RECEIVER_ADVERTISING,"test",NULL);
+    for(size_t i=0;i<(size_t)width*height;i++)canvas[i]=RGB(80,110,140);
+    video_decoder_frame_t frame={.rgb565=canvas,.width=width,.height=height,.stride_bytes=(size_t)width*2,
+        .view_rect={0,0,width,height},.source_width=720,.source_height=720};
+    native_ui_video(NULL,&frame);draw();
+    assert(!controls_shown()&&memcmp(canvas,video,(size_t)width*height*2)==0);
+    assert(video_hit(0,0)&&video_hit(width-1,height-1));
+
+    unsigned clicks=mouse_presses;
+    sample_touch(width/2,2,1,10000);sample_touch(width/2,64,1,10060);
+    assert(controls&&!input.active);sample_touch(0,0,0,10080);
+    assert(mouse_presses==clicks);draw();assert(canvas[0]!=video[0]);
+    sample_touch(width/2,48,1,10100);sample_touch(width/2,0,1,10160);
+    sample_touch(0,0,0,10180);assert(!controls_shown());
+    draw();assert(memcmp(canvas,video,(size_t)width*height*2)==0);
+    native_ui_airplay(AIRPLAY_RECEIVER_WAITING_VIDEO,"temporary pause",NULL);
+    assert(have_video&&recovering&&!video_hit(200,200));
+    native_ui_video(NULL,&frame);assert(!recovering&&!controls_shown());
+
+    sample_touch(width/2,height-2,1,10200);sample_touch(width/2,height-64,1,10260);
+    sample_touch(0,0,0,10280);assert(controls);
+    sample_touch(width/2,controls_handle_y()+3,1,10300);sample_touch(width/2,height-2,1,10360);
+    sample_touch(0,0,0,10380);assert(!controls_shown()&&mouse_presses==clicks);
+
+    sample_touch(200,200,1,10400);sample_touch(200,270,1,10460);
+    assert(input.active&&!controls);sample_touch(0,0,0,10480);
+    sample_touch(100,3,1,10500);sample_touch(0,0,0,10550);
+    assert(mouse_presses==clicks+1&&!controls);
+    sample_touch(100,3,1,10600);sample_touch(180,3,1,10650);
+    assert(input.active&&!edge_capture&&!controls);sample_touch(0,0,0,10680);
+
+    keyboard=controls=true;modifiers=MOD_GUI;
+    sample_touch(width/2,48,1,10700);sample_touch(width/2,0,1,10760);
+    sample_touch(0,0,0,10780);assert(!keyboard&&!modifiers&&!controls);
+    height=saved_height;layout_keyboard();
+    puts("Fullscreen: exact 720x720 pixels; edge swipes reveal/hide controls; central drags and edge taps reach HID");
+}
+
 static void feed(bool key,size_t len){
     uint8_t bytes[80]={0};assert(len<=sizeof bytes);
     airplay_receiver_frame_t frame={.data=bytes,.len=len,.keyframe=key};received_frame(&frame,NULL);
@@ -116,6 +158,16 @@ static void run_decoder_until_idle(void){
     stub_exit_on_idle=1;
     if(setjmp(stub_task_exit)==0)decode_task(NULL);
     stub_exit_on_idle=0;
+}
+
+static void drain_one_during_wait(void){
+    stub_delay_hook=NULL;
+    access_unit_t unit;
+    assert(take_access_unit(&unit));retire_access_unit(&unit);
+}
+static void reset_during_wait(void){
+    stub_delay_hook=NULL;
+    receiver_state(AIRPLAY_RECEIVER_ADVERTISING,"session ended",NULL);
 }
 
 static void pipeline_regressions(void){
@@ -137,7 +189,7 @@ static void pipeline_regressions(void){
     decode_context_t context={old.epoch};decoded_frame(&context,&frame);assert(decoded_frames==before);
     context.current_epoch=fresh;decoded_frame(&context,&frame);assert(decoded_frames==before+1);
     receiver_state(AIRPLAY_RECEIVER_WAITING_VIDEO,"Packet lost",NULL);
-    assert(queued_bytes==0&&needs_idr&&!have_video);
+    assert(queued_bytes==0&&needs_idr&&have_video&&recovering);
     retire_access_unit(&old);assert(inflight_bytes==0);
     feed(false,24);assert(queued_bytes==0);
 
@@ -148,7 +200,15 @@ static void pipeline_regressions(void){
     assert(queued_bytes==0&&inflight_bytes==0);
     stub_alloc_fail=1;feed(true,24);stub_alloc_fail=0;assert(needs_idr&&queued_bytes==0);
     feed(true,65);assert(queued_bytes==0&&needs_idr);
+    feed(true,24);feed(false,24);
+    unsigned before_drops=dropped, before_epoch=atomic_load(&epoch);
+    stub_delay_hook=drain_one_during_wait;feed(false,24);
+    assert(queued_bytes==48&&dropped==before_drops&&atomic_load(&epoch)==before_epoch);
+    stub_delay_hook=reset_during_wait;feed(false,24);
+    assert(queued_bytes==0&&inflight_bytes==0&&needs_idr&&atomic_load(&epoch)!=before_epoch);
+    assert(stub_delay_hook==NULL);
     puts("Pipeline: full budget includes in-flight AU; IDR recovery; old epoch cannot publish or clear new queue; reset failure handled");
+    puts("TCP backpressure: pressure waits without dropping reference frames; reset cancels a waiting old-session AU; timeout remains bounded");
 }
 
 static void presentation_regressions(void){
@@ -205,7 +265,12 @@ static void render_pages(const char *directory){
         native_ui_airplay(AIRPLAY_RECEIVER_ADVERTISING,"Host render: no Mac connected",NULL);
         native_ui_ble(INPUT_BLE_OFF,"Host render: input not paired",NULL);
         draw();save_ppm(directory,boards[b].name,"home");
-        diagnostic_video();have_video=true;keyboard=true;
+        diagnostic_video();have_video=true;keyboard=false;controls=false;
+        draw();save_ppm(directory,boards[b].name,"fullscreen");
+        controls=true;draw();save_ppm(directory,boards[b].name,"controls");
+        native_ui_airplay(AIRPLAY_RECEIVER_NO_VIDEO,"Host test: temporary video pause",NULL);
+        draw();save_ppm(directory,boards[b].name,"waiting");recovering=false;
+        keyboard=true;
         draw();save_ppm(directory,boards[b].name,"keyboard");
         keyboard=false;info=true;have_video=false;
         native_ui_network(NETWORK_READY,"Host rendering only","192.0.2.10",NULL);
@@ -221,7 +286,7 @@ int main(int argc,char **argv){
     const char *render_directory=NULL;
     if(argc==3&&strcmp(argv[1],"--render")==0)render_directory=argv[2];
     else if(argc!=1){fprintf(stderr,"usage: %s [--render DIRECTORY]\n",argv[0]);return 2;}
-    ui_regressions();pipeline_regressions();presentation_regressions();
+    ui_regressions();fullscreen_regressions();pipeline_regressions();presentation_regressions();
     if(render_directory)render_pages(render_directory);
     reset_pipeline();vQueueDelete(frame_queue);vSemaphoreDelete(pipeline_lock);
     free(video);free(canvas);vSemaphoreDelete(lock);

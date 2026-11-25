@@ -32,6 +32,7 @@ typedef struct {
     uint16_t width;      /* Requested stream size. AirPlay senders may choose a different size. */
     uint16_t height;
     uint8_t max_fps;     /* Requested maximum FPS; not a guarantee. */
+    uint16_t width_mm, height_mm; /* Physical display size; both zero if unknown. */
     void (*frame_cb)(const airplay_receiver_frame_t *frame, void *ctx);
     void (*state_cb)(airplay_receiver_state_t state, const char *detail, void *ctx);
     void *ctx;
@@ -40,7 +41,8 @@ typedef struct {
 /**
  * Start one LAN AirPlay mirroring receiver after NVS and the IP interface are ready.
  * The receiver persists its Ed25519 identity in NVS namespace "p4_airplay".
- * Both callbacks run on receiver tasks, may run concurrently, and must return promptly.
+ * Callbacks run on receiver tasks and may run concurrently. State callbacks must
+ * return promptly; frame callbacks may apply bounded TCP backpressure (up to 2s).
  * Frame data and state detail strings are valid only for the duration of the callback.
  * Copy frames synchronously into a bounded decoder queue; never retain the pointer.
  * Do not call start/stop from a callback or call these lifecycle functions concurrently.
