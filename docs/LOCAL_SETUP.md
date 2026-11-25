@@ -161,6 +161,46 @@ USB 状态提供 `decoded_outputs`、`replaced_outputs` 和 `frame_age_ms`，分
 复制的输出、被覆盖的待显示输出，以及快照到 UI 的年龄；最后一项不是端到端延迟。
 当前尚待 Mac 重新连接同一 FastSync 名称后测量实际替换数量和延迟。
 
+## 局域网测速（23:07 起）
+
+已按用户要求将本地 main 推送到 origin，初次推送的 HEAD 为 `b06df59`。
+本次未改写固件。Mac 路由走 en0，Wi-Fi 为信道 1（2.4 GHz），RSSI −44 dBm、
+噪声 −78 dBm，系统报告发送链路速率 115 Mbps；这不是实际吞吐量。
+后续读取同样为 2.4 GHz，但 RSSI 为 −53 dBm、链路速率降至 43 Mbps，存在波动。
+
+开始时旧地址 `192.168.199.53` 的 ARP 为 `c2:56:27:9a:aa:f0`，TCP 连接超时，
+20 个 1200 字节 ICMP 包只收到 9 个，收到的往返时间约 4–10 秒。
+同期到网关 `192.168.199.1` 为 0 丢包、平均 7.59 ms。
+打开 USB 串口触发设备复位，日志确认 Claw4 再取得同一 IP，ARP 随后变为
+`3c:dc:75:8b:a0:94`；从 `/info` 另行核实 FastSync 名称及 AirPlay deviceID。
+这表明先前地址映射存在异常，尚不能确定是地址冲突还是缓存/代理行为，
+不能将先前超时直接当作已确认的 Claw4 吞吐结果。
+
+重新联网后，1200 字节 ICMP 的 20/20 个回复均到达，平均 14.90 ms、最大 29.42 ms；
+另一段 30/30 采样平均 29.66 ms、最大 134.95 ms，显示延迟仍有波动。
+通过同一 TCP 连接发送 60 KiB OPTIONS 请求体，每批四个，收到完整 200 回复
+才累计有效载荷；三轮约四秒测试分别为 2.686、3.044、3.511 Mbps。
+另一轮 5.746 秒确认 1,474,560 字节，即 2.053 Mbps；macOS TCP_CONNECTION_INFO
+报告 MSS 1440、发送窗口 65534、拥塞窗口 46080、平均 RTT 132 ms、
+重传 26 包 / 37,440 字节。固件接收窗口已经为 65534，不能简单归因于很小的默认窗口。
+
+该方法包含接收端控制解析器开销，是业务路径吞吐的下界，不是纯 Wi-Fi/iperf 极限。
+当时没有 AirPlay 视频流；不能据此精确计算投屏时所需带宽余量。
+网络低吞吐及抖动可能加剧复杂画面的延迟，既有 RGB 转换约 110 ms/帧也仍是明确瓶颈。
+双连接尝试曾触发控制连接中止/半包超时，不作为成功吞吐结果。
+
+测速工具（仅 Python 标准库；先核对接收端身份，不配对或 SETUP）：
+
+```sh
+python3 tools/measure_link.py --host 192.168.199.53 \
+  --expect-name 'MetalioClaw4 Display FastSync' --seconds 5 \
+  --output .build/link-check.json
+```
+
+原始采样在本地忽略目录 `connect-debug/bandwidth-*.json`、`bandwidth-ping-*.txt`，
+串口诊断在 `connect-debug/network-connection.log`。测速工具的失败结果标记
+`completed=false`，并只累计已由应用完整确认的载荷。
+
 ## USB 连接和亮边诊断边界
 
 最初只有另一个 ESP32-S31（MAC `1c:29:04:d0:b3:96`）及多级 HUB 中的 `1a86:8091`，没有 Claw4 主控。
