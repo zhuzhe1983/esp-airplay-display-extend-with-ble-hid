@@ -38,6 +38,8 @@ H.264 Baseline/Main/High、协议包边界与 20,000 个畸形输入、触控与
 
 截至本次初检，macOS 唯一外接串口 `/dev/cu.usbmodem101` 经 esptool v5.3.0 实际识别为 ESP32-S31 revision v0.0，MAC `1c:29:04:d0:b3:96`。用户确认 S31 是另一个设备；尚未发现 Claw4 的 P4 主控端口，未执行 Flash 写入。端口观察记录在 `.build/usb-detection.log`。
 
+完整 USB 树还显示 `1a86:8091`（USB HUB），位于 `02144330`，通过 Corsair ST100 与多级集线器连接，当前没有子设备。该 VID/PID 与本机此前 Claw4 排查记录一致，可作为拔插对照线索；尚未通过本次拔插确认归属，不能将 HUB 本身当作 P4 主控。
+
 Claw4 官方主控端口描述为 `USB JTAG/serial debug unit`，但必须进一步读取芯片身份，不能仅依赖端口名称。
 
 连接排查：使用数据线直连、设备开机并正常重启；若使用虚拟 USB 磁盘，应先从电脑安全弹出并在设备停用。若存在明确标记的 BOOT/RESET，可按住 BOOT、短按 RESET，复位后松开 BOOT。P4 原理是复位时 GPIO35 为低；官方 Claw4 文档没有标注机身按键位置，不将电源键当作 BOOT，也不要求拆机短接。
